@@ -22,7 +22,7 @@ const (
 )
 
 func (n NodeType) String() string {
-	return [...]string{"ue", "gnb", "amf"}[n]
+	return [...]string{"ue", "gnb"}[n]
 }
 
 type Shell struct {
@@ -533,7 +533,6 @@ func main() {
 	// Debug output để xem tất cả các tham số
 	fmt.Println("Arguments:", args)
 
-	// Kiểm tra số lượng tham số chính xác hơn
 	if len(args) < 3 {
 		fmt.Println("Usage: go run client/client.go -p <server-ip>:<server-port>")
 		os.Exit(1)
