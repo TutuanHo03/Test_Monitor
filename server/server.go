@@ -75,6 +75,7 @@ func NewServer(ip string, port int) *Shell {
 
 // SetupShellUE configures UE commands with their handlers
 func (s *Shell) SetupShellUE(fn func(map[string]string), args map[string]string) {
+	//FIX: fn is not used!!!
 	// Find UE node
 	var ueNode *Node
 	for i, node := range s.Nodes {
@@ -95,6 +96,10 @@ func (s *Shell) SetupShellUE(fn func(map[string]string), args map[string]string)
 		}
 		s.Nodes = append(s.Nodes, *ueNode)
 	}
+
+	//FIX: handler args: shoudld: user define in ```args map[string]string```
+	//NOTE: for example: input: fn, arg { "amf": "Register UE to AMF", "gnb": "use gnb" }
+	//NOTE: Node.Commands[i].Func = fn & Node.Commands[i].{Name, Uages} <-- arg
 
 	// Define handlers
 	registerHandler := func(arguments map[string]string) string {
