@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"test_monitor/models"
 	"time"
 
 	"github.com/abiosoft/ishell"
@@ -16,9 +17,8 @@ import (
 type NodeType int
 
 const (
-	UE NodeType = iota
-	Gnb
-	Amf
+	UE  NodeType = 0
+	Gnb NodeType = 1
 )
 
 func (n NodeType) String() string {
@@ -63,15 +63,6 @@ type Command struct {
 type CommandsListResponse struct {
 	Commands []Command `json:"commands"`
 	Error    string    `json:"error"`
-}
-
-type FormArgs struct {
-	NodeType   string            `json:"nodeType"`
-	NodeName   string            `json:"nodeName"`
-	Command    string            `json:"command"`
-	Subcommand string            `json:"subcommand"`
-	Arguments  map[string]string `json:"arguments"`
-	RawCommand string            `json:"rawCommand"`
 }
 
 func (s *Shell) newShell(id NodeType) {
@@ -219,17 +210,8 @@ func (s *Shell) handleSelectCommand(shell *ishell.Shell, nodeType string, nodeNa
 	nodeShell.Run()
 }
 
-func (s *Shell) parseCommand(_ string, args []string) (map[string]string, string) {
+func (s *Shell) parseCommand(_ string, args []string) map[string]string {
 	parsedArgs := make(map[string]string)
-	var subcommand string
-
-	// Extract the subcommand (first argument with -- prefix)
-	for _, arg := range args {
-		if strings.HasPrefix(arg, "--") {
-			subcommand = arg
-			break
-		}
-	}
 
 	// Process remaining arguments into key-value pairs
 	for i := 0; i < len(args); i++ {
@@ -256,7 +238,7 @@ func (s *Shell) parseCommand(_ string, args []string) (map[string]string, string
 		}
 	}
 
-	return parsedArgs, subcommand
+	return parsedArgs
 }
 
 func (s *Shell) setupNodeCommands(nodeShell *ishell.Shell, nodeType string, nodeName string) error {
@@ -297,10 +279,10 @@ func (s *Shell) setupNodeCommands(nodeShell *ishell.Shell, nodeType string, node
 					command += " " + strings.Join(c.Args, " ")
 				}
 
-				args, subcommand := s.parseCommand(command, c.Args)
+				args := s.parseCommand(command, c.Args)
 
 				// Send response to server
-				response, err := s.sendCommand(nodeType, nodeName, command, subcommand, args)
+				response, err := s.sendCommand(nodeType, nodeName, command, args)
 				if err != nil {
 					c.Println("Error:", err)
 					return
@@ -469,15 +451,14 @@ func (s *Shell) checkNodeExists(nodeType string, nodeName string) (bool, error) 
 	return result.Exists, nil
 }
 
-func (s *Shell) sendCommand(nodeType, nodeName, fullCommand, subcommand string, args map[string]string) (string, error) {
+func (s *Shell) sendCommand(nodeType, nodeName, fullCommand string, args map[string]string) (string, error) {
 	cmdParts := strings.Fields(fullCommand)
 	baseCommand := cmdParts[0]
 	// Create the form args
-	formArgs := FormArgs{
+	formArgs := models.FormArgs{
 		NodeType:   nodeType,
 		NodeName:   nodeName,
 		Command:    baseCommand,
-		Subcommand: subcommand,
 		Arguments:  make(map[string]string),
 		RawCommand: fullCommand,
 	}
@@ -529,7 +510,7 @@ func (s *Shell) sendCommand(nodeType, nodeName, fullCommand, subcommand string, 
 func main() {
 	args := os.Args
 
-	// Debug output để xem tất cả các tham số
+	// Debug output
 	fmt.Println("Arguments:", args)
 
 	if len(args) < 3 {

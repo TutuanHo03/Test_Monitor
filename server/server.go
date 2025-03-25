@@ -2,10 +2,8 @@ package main
 
 import (
 	"fmt"
-
 	"log"
 	"net/http"
-
 	"strings"
 
 	"test_monitor/models"
@@ -17,13 +15,12 @@ import (
 type NodeType int
 
 const (
-	UE NodeType = iota
-	Gnb
-	Amf
+	UE  NodeType = 0
+	Gnb NodeType = 1
 )
 
 func (n NodeType) String() string {
-	return [...]string{"ue", "gnb", "amf"}[n]
+	return [...]string{"ue", "gnb"}[n]
 }
 
 type Shell struct {
@@ -50,7 +47,15 @@ func NewServer(ip string, port int) *Shell {
 		Nodes: []Node{
 			{
 				Type:        UE,
-				Name:        "UE-001",
+				Name:        "imsi-2089300007487",
+				AllNodes:    make(map[string][]string),
+				ActiveNodes: make(map[string][]string),
+				Commands:    []models.Command{},
+				Shell:       ishell.New(),
+			},
+			{
+				Type:        UE,
+				Name:        "imsi-4520100007487",
 				AllNodes:    make(map[string][]string),
 				ActiveNodes: make(map[string][]string),
 				Commands:    []models.Command{},
@@ -67,9 +72,6 @@ func NewServer(ip string, port int) *Shell {
 		},
 	}
 }
-
-// CommandHandler defines the signature for command handler functions
-type CommandHandler func(map[string]string) string
 
 // SetupShellUE configures UE commands with their handlers
 func (s *Shell) SetupShellUE(fn func(map[string]string), args map[string]string) {
