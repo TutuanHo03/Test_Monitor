@@ -245,13 +245,13 @@ func (s *Shell) parseCommand(_ string, args []string) (map[string]string, string
 				// Flag with value
 				value := args[i+1]
 
-				// If we already have this flag, append the new value
+				// If already have this flag, append the new value
 				if existingValue, ok := parsedArgs[flag]; ok {
 					parsedArgs[flag] = existingValue + "," + value
 				} else {
 					parsedArgs[flag] = value
 				}
-				i++ // Skip processing the value as a separate argument
+				i++
 			}
 		}
 	}
@@ -297,11 +297,10 @@ func (s *Shell) setupNodeCommands(nodeShell *ishell.Shell, nodeType string, node
 					command += " " + strings.Join(c.Args, " ")
 				}
 
-				// Parse arguments for the command
 				args, subcommand := s.parseCommand(command, c.Args)
 
 				// Send response to server
-				response, err := s.executeCommand(nodeType, nodeName, command, subcommand, args)
+				response, err := s.sendCommand(nodeType, nodeName, command, subcommand, args)
 				if err != nil {
 					c.Println("Error:", err)
 					return
@@ -470,7 +469,7 @@ func (s *Shell) checkNodeExists(nodeType string, nodeName string) (bool, error) 
 	return result.Exists, nil
 }
 
-func (s *Shell) executeCommand(nodeType, nodeName, fullCommand, subcommand string, args map[string]string) (string, error) {
+func (s *Shell) sendCommand(nodeType, nodeName, fullCommand, subcommand string, args map[string]string) (string, error) {
 	cmdParts := strings.Fields(fullCommand)
 	baseCommand := cmdParts[0]
 	// Create the form args

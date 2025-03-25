@@ -426,7 +426,7 @@ func (s *Shell) SetupServer() {
 
 	// API to get available node types
 	r.GET("/nodes/types", func(c *gin.Context) {
-		types := []string{"ue", "gnb", "amf"}
+		types := []string{"ue", "gnb"}
 		c.JSON(http.StatusOK, gin.H{
 			"types": types,
 		})
@@ -448,6 +448,7 @@ func (s *Shell) SetupServer() {
 		})
 	})
 
+	//API to get available commands for a specific node type
 	r.GET("/commands/:nodeType", func(c *gin.Context) {
 		nodeType := c.Param("nodeType")
 		var commands []map[string]string
