@@ -74,7 +74,7 @@ func NewServer(ip string, port int) *Shell {
 }
 
 // SetupShellUE configures UE commands with their handlers
-func (s *Shell) SetupShellUE(fn func(map[string]string), args map[string]string) {
+func (s *Shell) SetupShellUE(fn func(map[string]string) string, args map[string]string) {
 	// Find UE node
 	var ueNode *Node
 	for i, node := range s.Nodes {
@@ -89,6 +89,7 @@ func (s *Shell) SetupShellUE(fn func(map[string]string), args map[string]string)
 		ueNode = &Node{
 			Type:        UE,
 			Name:        "UE-Default",
+			AllNodes:    make(map[string][]string),
 			ActiveNodes: make(map[string][]string),
 			Commands:    []models.Command{},
 			Shell:       ishell.New(),
@@ -96,103 +97,30 @@ func (s *Shell) SetupShellUE(fn func(map[string]string), args map[string]string)
 		s.Nodes = append(s.Nodes, *ueNode)
 	}
 
-	// Define handlers
-	registerHandler := func(arguments map[string]string) string {
-		// Process the arguments
-		nodeName := ueNode.Name
-		response := ""
-
-		// Handle --help flag
-		if _, ok := arguments["help"]; ok {
-			return "Usage: register [--amf] [--smf] [--help]\n" +
-				"--amf      : Register UE to AMF\n" +
-				"--smf      : Register UE to SMF\n" +
-				"--help     : Show this help message"
-		}
-
-		// Process AMF arguments
-		if amfValues, ok := arguments["amf-name"]; ok {
-			amfs := strings.Split(amfValues, ",")
-			formattedAmfs := strings.Join(amfs, ", ")
-			if response != "" {
-				response += ", "
-			}
-			response += fmt.Sprintf("AMF: %s", formattedAmfs)
-		}
-
-		// Process SMF arguments
-		if smfValues, ok := arguments["smf-name"]; ok {
-			smfs := strings.Split(smfValues, ",")
-			formattedSmfs := strings.Join(smfs, ", ")
-			if response != "" {
-				response += ", "
-			}
-			response += fmt.Sprintf("SMF: %s", formattedSmfs)
-		}
-
-		if response == "" {
-			return "Error: No valid arguments provided"
-		}
-
-		return fmt.Sprintf("Registering UE %s to %s", nodeName, response)
-	}
-
-	deregisterHandler := func(arguments map[string]string) string {
-		// Process the arguments
-		nodeName := ueNode.Name
-		response := ""
-		forceFlag := false
-
-		// Handle --help flag
-		if _, ok := arguments["help"]; ok {
-			return "Usage: deregister [--amf] [--smf] [--help] [--force]\n" +
-				"--amf      : Deregister UE from AMF\n" +
-				"--smf      : Deregister UE from SMF\n" +
-				"--force    : Force deregister\n" +
-				"--help     : Show this help message"
-		}
-
-		// Check if force flag is present
-		if _, ok := arguments["force"]; ok {
-			forceFlag = true
-		}
-
-		// Process AMF arguments
-		if amfValues, ok := arguments["amf-name"]; ok {
-			amfs := strings.Split(amfValues, ",")
-			formattedAmfs := strings.Join(amfs, ", ")
-			if response != "" {
-				response += ", "
-			}
-			response += fmt.Sprintf("AMF: %s", formattedAmfs)
-		}
-
-		// Process SMF arguments
-		if smfValues, ok := arguments["smf-name"]; ok {
-			smfs := strings.Split(smfValues, ",")
-			formattedSmfs := strings.Join(smfs, ", ")
-			if response != "" {
-				response += ", "
-			}
-			response += fmt.Sprintf("SMF: %s", formattedSmfs)
-		}
-
-		if response == "" {
-			return "Error: No valid arguments provided"
-		}
-
-		if forceFlag {
-			return fmt.Sprintf("Forcing to deregister UE %s from %s", nodeName, response)
-		}
-		return fmt.Sprintf("Deregistering UE %s from %s", nodeName, response)
-	}
-
 	// Setup register command
 	registerCommand := models.Command{
 		Name:  "register",
 		Help:  "Sign in the UE to Core",
 		Usage: "Usage: register [--amf] [--smf] [--help]",
-		Func:  registerHandler,
+		// Use fn instead of defining a new function
+		Func: func(cmdArgs map[string]string) string {
+			// Combine the passed args with command-specific args
+			combinedArgs := make(map[string]string)
+			for k, v := range args {
+				combinedArgs[k] = v
+			}
+			for k, v := range cmdArgs {
+				combinedArgs[k] = v
+			}
+
+			// Add node name for context
+			combinedArgs["nodeName"] = ueNode.Name
+			combinedArgs["nodeType"] = "ue"
+			combinedArgs["command"] = "register"
+
+			// Call the provided function with combined args
+			return fn(combinedArgs)
+		},
 		Arguments: []models.Argument{
 			{
 				Tag:          "--amf",
@@ -223,7 +151,25 @@ func (s *Shell) SetupShellUE(fn func(map[string]string), args map[string]string)
 		Name:  "deregister",
 		Help:  "Sign out the UE from Core",
 		Usage: "Usage: deregister [--amf] [--smf] [--help] [--force]",
-		Func:  deregisterHandler,
+		// Use fn instead of defining a new function
+		Func: func(cmdArgs map[string]string) string {
+			// Combine the passed args with command-specific args
+			combinedArgs := make(map[string]string)
+			for k, v := range args {
+				combinedArgs[k] = v
+			}
+			for k, v := range cmdArgs {
+				combinedArgs[k] = v
+			}
+
+			// Add node name for context
+			combinedArgs["nodeName"] = ueNode.Name
+			combinedArgs["nodeType"] = "ue"
+			combinedArgs["command"] = "deregister"
+
+			// Call the provided function with combined args
+			return fn(combinedArgs)
+		},
 		Arguments: []models.Argument{
 			{
 				Tag:          "--amf",
@@ -261,7 +207,7 @@ func (s *Shell) SetupShellUE(fn func(map[string]string), args map[string]string)
 }
 
 // SetupShellGnb configures gNB commands with their handlers
-func (s *Shell) SetupShellGnb(fn func(map[string]string), args map[string]string) {
+func (s *Shell) SetupShellGnb(fn func(map[string]string) string, args map[string]string) {
 	// Find gNB node
 	var gnbNode *Node
 	for i, node := range s.Nodes {
@@ -276,6 +222,7 @@ func (s *Shell) SetupShellGnb(fn func(map[string]string), args map[string]string
 		gnbNode = &Node{
 			Type:        Gnb,
 			Name:        "GNB-Default",
+			AllNodes:    make(map[string][]string),
 			ActiveNodes: make(map[string][]string),
 			Commands:    []models.Command{},
 			Shell:       ishell.New(),
@@ -283,79 +230,30 @@ func (s *Shell) SetupShellGnb(fn func(map[string]string), args map[string]string
 		s.Nodes = append(s.Nodes, *gnbNode)
 	}
 
-	// Define handlers
-	amfInfoHandler := func(arguments map[string]string) string {
-		// Process the arguments
-		nodeName := gnbNode.Name
-
-		// Handle --help flag
-		if _, ok := arguments["help"]; ok {
-			return "Usage: amf-info [--status] [--detail] [amf-name]\n" +
-				"--status : Show AMF status\n" +
-				"--detail : Show AMF detail"
-		}
-
-		// Handle status query
-		if _, ok := arguments["status"]; ok {
-			if amfValues, ok := arguments["amf-name"]; ok {
-				amfs := strings.Split(amfValues, ",")
-				formattedAmfs := strings.Join(amfs, ", ")
-				return fmt.Sprintf("%s Status for gNodeB %s: Connected and operational", formattedAmfs, nodeName)
-			}
-			return fmt.Sprintf("All AMFs Status for gNodeB %s: Connected and operational", nodeName)
-		}
-
-		// Handle detail query
-		if _, ok := arguments["detail"]; ok {
-			if amfValues, ok := arguments["amf-name"]; ok {
-				amfs := strings.Split(amfValues, ",")
-				formattedAmfs := strings.Join(amfs, ", ")
-				return fmt.Sprintf("%s Detail for gNodeB %s: Capacity=85%%", formattedAmfs, nodeName)
-			}
-			return fmt.Sprintf("All AMFs Detail for gNodeB %s: Capacity=85%%", nodeName)
-		}
-
-		return "Error: No valid arguments provided"
-	}
-
-	amfListHandler := func(arguments map[string]string) string {
-		// Process the arguments
-		nodeName := gnbNode.Name
-
-		// Handle --help flag
-		if _, ok := arguments["help"]; ok {
-			return "Usage: amf-list [--all] [--active]\n" +
-				"--all     : List all AMFs\n" +
-				"--active  : List active AMFs"
-		}
-
-		// Handle all AMFs listing
-		if _, ok := arguments["all"]; ok {
-			if allAmfs, ok := gnbNode.AllNodes["amf"]; ok && len(allAmfs) > 0 {
-				formattedAmfs := strings.Join(allAmfs, " ")
-				return fmt.Sprintf("AMF List for gNodeB %s: %s", nodeName, formattedAmfs)
-			}
-			return fmt.Sprintf("No AMFs found for gNodeB %s", nodeName)
-		}
-
-		// Handle active AMFs listing
-		if _, ok := arguments["active"]; ok {
-			if activeAmfs, ok := gnbNode.ActiveNodes["amf"]; ok && len(activeAmfs) > 0 {
-				formattedAmfs := strings.Join(activeAmfs, " ")
-				return fmt.Sprintf("Active AMFs connected to gNodeB %s: %s", nodeName, formattedAmfs)
-			}
-			return fmt.Sprintf("No active AMFs connected to gNodeB %s", nodeName)
-		}
-
-		return "Error: No valid arguments provided"
-	}
-
 	// Setup amf-info command
 	amfInfoCommand := models.Command{
 		Name:  "amf-info",
 		Help:  "Show information about AMFs",
 		Usage: "Usage: amf-info [--status] [--detail] [amf-name]",
-		Func:  amfInfoHandler,
+		// Use fn instead of defining a new function
+		Func: func(cmdArgs map[string]string) string {
+			// Combine the passed args with command-specific args
+			combinedArgs := make(map[string]string)
+			for k, v := range args {
+				combinedArgs[k] = v
+			}
+			for k, v := range cmdArgs {
+				combinedArgs[k] = v
+			}
+
+			// Add node name for context
+			combinedArgs["nodeName"] = gnbNode.Name
+			combinedArgs["nodeType"] = "gnb"
+			combinedArgs["command"] = "amf-info"
+
+			// Call the provided function with combined args
+			return fn(combinedArgs)
+		},
 		Arguments: []models.Argument{
 			{
 				Tag:          "--status",
@@ -393,7 +291,40 @@ func (s *Shell) SetupShellGnb(fn func(map[string]string), args map[string]string
 		Name:  "amf-list",
 		Help:  "List AMFs connected to this gNB",
 		Usage: "Usage: amf-list [--all] [--active] [--help]",
-		Func:  amfListHandler,
+		// Use fn instead of defining a new function
+		Func: func(cmdArgs map[string]string) string {
+			// Combine the passed args with command-specific args
+			combinedArgs := make(map[string]string)
+			for k, v := range args {
+				combinedArgs[k] = v
+			}
+			for k, v := range cmdArgs {
+				combinedArgs[k] = v
+			}
+
+			// Add node name for context
+			combinedArgs["nodeName"] = gnbNode.Name
+			combinedArgs["nodeType"] = "gnb"
+			combinedArgs["command"] = "amf-list"
+
+			// Special handling for --all and --active options to use AllNodes and ActiveNodes
+			if _, ok := cmdArgs["all"]; ok {
+				if allAmfs, ok := gnbNode.AllNodes["amf"]; ok && len(allAmfs) > 0 {
+					formattedAmfs := strings.Join(allAmfs, " ")
+					combinedArgs["allAmfs"] = formattedAmfs
+				}
+			}
+
+			if _, ok := cmdArgs["active"]; ok {
+				if activeAmfs, ok := gnbNode.ActiveNodes["amf"]; ok && len(activeAmfs) > 0 {
+					formattedAmfs := strings.Join(activeAmfs, " ")
+					combinedArgs["activeAmfs"] = formattedAmfs
+				}
+			}
+
+			// Call the provided function with combined args
+			return fn(combinedArgs)
+		},
 		Arguments: []models.Argument{
 			{
 				Tag:          "--all",
@@ -559,14 +490,7 @@ func (s *Shell) SetupServer() {
 func main() {
 	server := NewServer("0.0.0.0", 4000)
 
-	// Setup command handlers for each node type
-	dummyFunction := func(args map[string]string) {}
-	dummyArgs := make(map[string]string)
-
-	server.SetupShellUE(dummyFunction, dummyArgs)
-	server.SetupShellGnb(dummyFunction, dummyArgs)
-
-	// Setup example All nodes and Active nodes
+	// Setup example All nodes and Active nodes first
 	for i, node := range server.Nodes {
 		switch node.Type {
 		case UE:
@@ -593,6 +517,177 @@ func main() {
 			}
 		}
 	}
+
+	// Define handler functions
+	ueHandler := func(args map[string]string) string {
+		command := args["command"]
+		nodeName := args["nodeName"]
+
+		// Handler logic based on the original code
+		if command == "register" {
+			response := ""
+
+			// Handle --help flag
+			if _, ok := args["help"]; ok {
+				return "Usage: register [--amf] [--smf] [--help]\n" +
+					"--amf      : Register UE to AMF\n" +
+					"--smf      : Register UE to SMF\n" +
+					"--help     : Show this help message"
+			}
+
+			// Process AMF arguments
+			if amfValues, ok := args["amf-name"]; ok {
+				amfs := strings.Split(amfValues, ",")
+				formattedAmfs := strings.Join(amfs, ", ")
+				if response != "" {
+					response += ", "
+				}
+				response += fmt.Sprintf("AMF: %s", formattedAmfs)
+			}
+
+			// Process SMF arguments
+			if smfValues, ok := args["smf-name"]; ok {
+				smfs := strings.Split(smfValues, ",")
+				formattedSmfs := strings.Join(smfs, ", ")
+				if response != "" {
+					response += ", "
+				}
+				response += fmt.Sprintf("SMF: %s", formattedSmfs)
+			}
+
+			if response == "" {
+				return "Error: No valid arguments provided"
+			}
+
+			return fmt.Sprintf("Registering UE %s to %s", nodeName, response)
+		} else if command == "deregister" {
+			response := ""
+			forceFlag := false
+
+			// Handle --help flag
+			if _, ok := args["help"]; ok {
+				return "Usage: deregister [--amf] [--smf] [--help] [--force]\n" +
+					"--amf      : Deregister UE from AMF\n" +
+					"--smf      : Deregister UE from SMF\n" +
+					"--force    : Force deregister\n" +
+					"--help     : Show this help message"
+			}
+
+			// Check if force flag is present
+			if _, ok := args["force"]; ok {
+				forceFlag = true
+			}
+
+			// Process AMF arguments
+			if amfValues, ok := args["amf-name"]; ok {
+				amfs := strings.Split(amfValues, ",")
+				formattedAmfs := strings.Join(amfs, ", ")
+				if response != "" {
+					response += ", "
+				}
+				response += fmt.Sprintf("AMF: %s", formattedAmfs)
+			}
+
+			// Process SMF arguments
+			if smfValues, ok := args["smf-name"]; ok {
+				smfs := strings.Split(smfValues, ",")
+				formattedSmfs := strings.Join(smfs, ", ")
+				if response != "" {
+					response += ", "
+				}
+				response += fmt.Sprintf("SMF: %s", formattedSmfs)
+			}
+
+			if response == "" {
+				return "Error: No valid arguments provided"
+			}
+
+			if forceFlag {
+				return fmt.Sprintf("Forcing to deregister UE %s from %s", nodeName, response)
+			}
+			return fmt.Sprintf("Deregistering UE %s from %s", nodeName, response)
+		}
+
+		return "Unknown command"
+	}
+
+	gnbHandler := func(args map[string]string) string {
+		command := args["command"]
+		nodeName := args["nodeName"]
+
+		if command == "amf-info" {
+			// Handle --help flag
+			if _, ok := args["help"]; ok {
+				return "Usage: amf-info [--status] [--detail] [amf-name]\n" +
+					"--status : Show AMF status\n" +
+					"--detail : Show AMF detail"
+			}
+
+			// Handle status query
+			if _, ok := args["status"]; ok {
+				if amfValues, ok := args["amf-name"]; ok {
+					amfs := strings.Split(amfValues, ",")
+					formattedAmfs := strings.Join(amfs, ", ")
+					return fmt.Sprintf("%s Status for gNodeB %s: Connected and operational", formattedAmfs, nodeName)
+				}
+				return fmt.Sprintf("All AMFs Status for gNodeB %s: Connected and operational", nodeName)
+			}
+
+			// Handle detail query
+			if _, ok := args["detail"]; ok {
+				if amfValues, ok := args["amf-name"]; ok {
+					amfs := strings.Split(amfValues, ",")
+					formattedAmfs := strings.Join(amfs, ", ")
+					return fmt.Sprintf("%s Detail for gNodeB %s: Capacity=85%%", formattedAmfs, nodeName)
+				}
+				return fmt.Sprintf("All AMFs Detail for gNodeB %s: Capacity=85%%", nodeName)
+			}
+
+			return "Error: No valid arguments provided"
+		} else if command == "amf-list" {
+			// Handle --help flag
+			if _, ok := args["help"]; ok {
+				return "Usage: amf-list [--all] [--active]\n" +
+					"--all     : List all AMFs\n" +
+					"--active  : List active AMFs"
+			}
+
+			// Handle all AMFs listing
+			if _, ok := args["all"]; ok {
+				if allAmfs, ok := args["allAmfs"]; ok {
+					return fmt.Sprintf("AMF List for gNodeB %s: %s", nodeName, allAmfs)
+				}
+				return fmt.Sprintf("No AMFs found for gNodeB %s", nodeName)
+			}
+
+			// Handle active AMFs listing
+			if _, ok := args["active"]; ok {
+				if activeAmfs, ok := args["activeAmfs"]; ok {
+					return fmt.Sprintf("Active AMFs connected to gNodeB %s: %s", nodeName, activeAmfs)
+				}
+				return fmt.Sprintf("No active AMFs connected to gNodeB %s", nodeName)
+			}
+
+			return "Error: No valid arguments provided"
+		}
+
+		return "Unknown command"
+	}
+
+	// Define command-specific information
+	ueArgs := map[string]string{
+		"register":   "Sign in the UE to Core",
+		"deregister": "Sign out the UE from Core",
+	}
+
+	gnbArgs := map[string]string{
+		"amf-info": "Show information about AMFs",
+		"amf-list": "List AMFs connected to this gNB",
+	}
+
+	// Setup command handlers for each node type
+	server.SetupShellUE(ueHandler, ueArgs)
+	server.SetupShellGnb(gnbHandler, gnbArgs)
 
 	// Setup the server
 	server.SetupServer()

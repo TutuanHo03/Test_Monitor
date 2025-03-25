@@ -1,3 +1,5 @@
+// Hiện tại file server_test.go đang chạy được nhưng có lỗi khi chạy test
+// Cần sửa lỗi về sau.
 package main
 
 import (
