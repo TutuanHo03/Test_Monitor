@@ -15,6 +15,7 @@ func main() {
 	//run server
 	emulator.InitCmds()
 
+	//run client
 	shell := ishell.New()
 	shell.Println("Interactive shell")
 	disconnectCmd = &ishell.Cmd{
@@ -56,14 +57,13 @@ func main() {
 
 	shell.Run()
 }
-
-//get commands from server
 func requestCommands(server string) (cmds []models.Command, err error) {
 	//TODO: connect to server to get command list
 	cmds = emulator.GetCommands()
 	return
 }
 
+//get commands from server
 func getCommands(server string) (cmds []*ishell.Cmd, err error) {
 	//request command list from server
 	var jsonCmds []models.Command
@@ -83,9 +83,9 @@ func getCommands(server string) (cmds []*ishell.Cmd, err error) {
 	return
 }
 
-//send command to server
+//execute command
 func execCmd(c *ishell.Context) {
-	args := append(c.Args, c.Cmd.Name)
+	args := append([]string{c.Cmd.Name}, c.Args...)
 	if rsp, err := sendCmd(args); err != nil {
 		c.Printf("Fail to send command to server: %+v\n", err)
 	} else {
@@ -93,6 +93,7 @@ func execCmd(c *ishell.Context) {
 	}
 }
 
+//send command to server
 func sendCmd(args []string) (rsp string, err error) {
 	//rsp = fmt.Sprintf("command \"%s\" is received", strings.Join(args, " "))
 	rsp, err = emulator.RunCmd(args)
