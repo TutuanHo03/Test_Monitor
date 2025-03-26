@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/abiosoft/ishell v2.0.0+incompatible
 	github.com/gin-gonic/gin v1.10.0
+	github.com/urfave/cli/v3 v3.0.0-beta1
 )
 
 require (
