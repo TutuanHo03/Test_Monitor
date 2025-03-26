@@ -17,18 +17,6 @@ func main() {
 
 	shell := ishell.New()
 	shell.Println("Interactive shell")
-
-	shell.AddCmd(&ishell.Cmd{
-		Name: "greet",
-		Help: "greet someone",
-		Func: func(c *ishell.Context) {
-			if len(c.Args) > 0 {
-				c.Println("Hello", c.Args[0])
-			} else {
-				c.Println("Hello there")
-			}
-		},
-	})
 	disconnectCmd = &ishell.Cmd{
 		Name: "disconnect",
 		Help: "Disconnect server",
@@ -44,7 +32,7 @@ func main() {
 
 	connectCmd = &ishell.Cmd{
 		Name: "connect",
-		Help: "Connect to server",
+		Help: "Connect to a server [connect http://192.168.0.100:5000]",
 		Func: func(c *ishell.Context) {
 			if len(c.Args) == 0 {
 				c.Printf("Missing server address\n")
@@ -69,7 +57,7 @@ func main() {
 	shell.Run()
 }
 
-//retrive commands from server
+//get commands from server
 func requestCommands(server string) (cmds []models.Command, err error) {
 	//TODO: connect to server to get command list
 	cmds = emulator.GetCommands()
@@ -77,11 +65,14 @@ func requestCommands(server string) (cmds []models.Command, err error) {
 }
 
 func getCommands(server string) (cmds []*ishell.Cmd, err error) {
+	//request command list from server
 	var jsonCmds []models.Command
 	if jsonCmds, err = requestCommands(server); err != nil {
 		err = fmt.Errorf("Fail to get command list: %+v", err)
 		return
 	}
+
+	//build ishell commands
 	for _, cmd := range jsonCmds {
 		cmds = append(cmds, &ishell.Cmd{
 			Name: cmd.Name,
