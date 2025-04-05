@@ -2,12 +2,11 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"net/http"
-	"reflect"
 	"strings"
+	"test_monitor/models"
 
-	"github.com/gin-gonic/gin"
 	"github.com/urfave/cli/v3"
 )
 
@@ -29,65 +28,39 @@ type GnbApi interface {
 	ReleaseSession(ueId string, sessionId uint8) bool
 }
 
-// CommandHandler - Process commands for emulator, UE, and gNB
-type CommandHandler struct {
-	eApi   EmulatorApi
-	uApi   UeApi
-	gApi   GnbApi
+// CommandStore manages command definitions and executions
+type CommandStore struct {
+	eApi EmulatorApi
+	uApi UeApi
+	gApi GnbApi
+
+	// Command definitions
 	emuCmd *cli.Command
 	ueCmd  *cli.Command
 	gnbCmd *cli.Command
+
+	// Cache of command info by node type
+	commandCache map[string][]models.CommandInfo
 }
 
-// CommandInfo - Basic Info Command to pass through API
-type CommandInfo struct {
-	Name        string        `json:"name"`
-	Usage       string        `json:"usage"`
-	Description string        `json:"description"`
-	ArgsUsage   string        `json:"argsUsage"`
-	Flags       []FlagInfo    `json:"flags"`
-	Subcommands []CommandInfo `json:"subcommands,omitempty"`
-}
-
-// FlagInfo - Thông tin flag đơn giản để truyền qua API
-type FlagInfo struct {
-	Name        string `json:"name"`
-	Usage       string `json:"usage"`
-	DefaultText string `json:"defaultText,omitempty"`
-	Required    bool   `json:"required"`
-}
-
-// CommandRequest - Cấu trúc yêu cầu thực thi lệnh
-type CommandRequest struct {
-	NodeType    string            `json:"nodeType"`
-	NodeName    string            `json:"nodeName"`
-	CommandPath string            `json:"commandPath"`
-	RawCommand  string            `json:"rawCommand"`
-	Args        []string          `json:"args,omitempty"`
-	Flags       map[string]string `json:"flags,omitempty"`
-}
-
-func NewCommandHandler(eApi EmulatorApi, uApi UeApi, gApi GnbApi) *CommandHandler {
-	h := &CommandHandler{
-		eApi: eApi,
-		uApi: uApi,
-		gApi: gApi,
+// NewCommandStore creates a new command store
+func NewCommandStore(eApi EmulatorApi, uApi UeApi, gApi GnbApi) *CommandStore {
+	store := &CommandStore{
+		eApi:         eApi,
+		uApi:         uApi,
+		gApi:         gApi,
+		commandCache: make(map[string][]models.CommandInfo),
 	}
 
-	// Khởi tạo command cho emulator
-	h.initEmulatorCommands()
+	store.initCommands()
 
-	// Khởi tạo command cho UE
-	h.initUeCommands()
-
-	// Khởi tạo command cho GNB
-	h.initGnbCommands()
-
-	return h
+	return store
 }
 
-func (h *CommandHandler) initEmulatorCommands() {
-	h.emuCmd = &cli.Command{
+// initCommands initializes all command definitions
+func (s *CommandStore) initCommands() {
+	// Initialize emulator commands
+	s.emuCmd = &cli.Command{
 		Name:        "emulator",
 		Usage:       "Emulator management commands",
 		Description: "Commands to manage and interact with the emulator",
@@ -97,8 +70,8 @@ func (h *CommandHandler) initEmulatorCommands() {
 				Usage: "List all UEs",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					rspCh := ctx.Value("rsp").(chan string)
-					ues := h.eApi.ListUes()
-					rspCh <- strings.Join(ues, " ")
+					ues := s.eApi.ListUes()
+					rspCh <- strings.Join(ues, "\n")
 					return nil
 				},
 			},
@@ -107,8 +80,8 @@ func (h *CommandHandler) initEmulatorCommands() {
 				Usage: "List all GnBs",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					rspCh := ctx.Value("rsp").(chan string)
-					gnbs := h.eApi.ListGnbs()
-					rspCh <- strings.Join(gnbs, " ")
+					gnbs := s.eApi.ListGnbs()
+					rspCh <- strings.Join(gnbs, "\n")
 					return nil
 				},
 			},
@@ -132,7 +105,7 @@ func (h *CommandHandler) initEmulatorCommands() {
 					}
 					supi := args[0]
 					register := cmd.Bool("register")
-					success := h.eApi.AddUe(supi, register)
+					success := s.eApi.AddUe(supi, register)
 					if success {
 						rspCh <- "UE added successfully"
 					} else {
@@ -143,10 +116,9 @@ func (h *CommandHandler) initEmulatorCommands() {
 			},
 		},
 	}
-}
 
-func (h *CommandHandler) initUeCommands() {
-	h.ueCmd = &cli.Command{
+	// Initialize UE commands
+	s.ueCmd = &cli.Command{
 		Name:        "ue",
 		Usage:       "UE management commands",
 		Description: "Commands to manage and interact with UEs",
@@ -164,7 +136,7 @@ func (h *CommandHandler) initUeCommands() {
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					rspCh := ctx.Value("rsp").(chan string)
 					isEmergency := cmd.Bool("emergency")
-					success := h.uApi.Register(isEmergency)
+					success := s.uApi.Register(isEmergency)
 					if success {
 						rspCh <- "UE registered successfully"
 					} else {
@@ -187,7 +159,7 @@ func (h *CommandHandler) initUeCommands() {
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					rspCh := ctx.Value("rsp").(chan string)
 					deregType := uint8(cmd.Int("type"))
-					success := h.uApi.Deregister(deregType)
+					success := s.uApi.Deregister(deregType)
 					if success {
 						rspCh <- "UE deregistered successfully"
 					} else {
@@ -222,7 +194,7 @@ func (h *CommandHandler) initUeCommands() {
 					slice := cmd.String("slice")
 					dn := cmd.String("dn")
 					sessionType := uint8(cmd.Int("type"))
-					success := h.uApi.CreateSession(slice, dn, sessionType)
+					success := s.uApi.CreateSession(slice, dn, sessionType)
 					if success {
 						rspCh <- "Session created successfully"
 					} else {
@@ -233,10 +205,9 @@ func (h *CommandHandler) initUeCommands() {
 			},
 		},
 	}
-}
 
-func (h *CommandHandler) initGnbCommands() {
-	h.gnbCmd = &cli.Command{
+	// Initialize GNB commands
+	s.gnbCmd = &cli.Command{
 		Name:        "gnb",
 		Usage:       "gNB management commands",
 		Description: "Commands to manage and interact with gNBs",
@@ -254,7 +225,7 @@ func (h *CommandHandler) initGnbCommands() {
 						return nil
 					}
 					ueId := args[0]
-					success := h.gApi.ReleaseUe(ueId)
+					success := s.gApi.ReleaseUe(ueId)
 					if success {
 						rspCh <- "UE released successfully"
 					} else {
@@ -284,7 +255,7 @@ func (h *CommandHandler) initGnbCommands() {
 					}
 					ueId := args[0]
 					sessionId := uint8(cmd.Int("id"))
-					success := h.gApi.ReleaseSession(ueId, sessionId)
+					success := s.gApi.ReleaseSession(ueId, sessionId)
 					if success {
 						rspCh <- "Session released successfully"
 					} else {
@@ -295,185 +266,208 @@ func (h *CommandHandler) initGnbCommands() {
 			},
 		},
 	}
+
+	// Build and cache CommandInfo objects
+	s.commandCache["emulator"] = s.convertCommandInfos(s.emuCmd.Commands)
+	s.commandCache["ue"] = s.convertCommandInfos(s.ueCmd.Commands)
+	s.commandCache["gnb"] = s.convertCommandInfos(s.gnbCmd.Commands)
 }
 
-func convertCommandToInfo(cmd *cli.Command) CommandInfo {
-	var flags []FlagInfo
-	for _, flag := range cmd.Flags {
-		names := flag.Names()
-		usage := ""
-		defaultText := ""
-		required := false
+// convertCommandInfos converts CLI commands to CommandInfo objects
+func (s *CommandStore) convertCommandInfos(commands []*cli.Command) []models.CommandInfo {
+	result := make([]models.CommandInfo, 0, len(commands))
 
-		// Kiểm tra nếu flag có phương thức GetRequired()
-		if f, ok := flag.(interface{ GetRequired() bool }); ok {
-			required = f.GetRequired()
+	for _, cmd := range commands {
+		info := models.CommandInfo{
+			Name:        cmd.Name,
+			Usage:       cmd.Usage,
+			Description: cmd.Description,
+			ArgsUsage:   cmd.ArgsUsage,
 		}
 
-		// Xử lý từng loại flag
-		switch f := flag.(type) {
-		case *cli.StringFlag:
-			usage = f.Usage
-			defaultText = f.Value
-		case *cli.BoolFlag:
-			usage = f.Usage
-			if f.Value {
-				defaultText = "true"
+		// Process flags
+		for _, flag := range cmd.Flags {
+			flagInfo := models.FlagInfo{
+				Name:  strings.Join(flag.Names(), ", "),
+				Usage: flagUsage(flag),
 			}
-		case *cli.IntFlag:
-			usage = f.Usage
-			if f.Value != 0 {
-				defaultText = fmt.Sprintf("%d", f.Value)
+
+			// Set default value text based on flag type
+			switch f := flag.(type) {
+			case *cli.StringFlag:
+				flagInfo.DefaultText = f.Value
+			case *cli.BoolFlag:
+				if f.Value {
+					flagInfo.DefaultText = "true"
+				} else {
+					flagInfo.DefaultText = "false"
+				}
+			case *cli.IntFlag:
+				if f.Value != 0 {
+					flagInfo.DefaultText = fmt.Sprintf("%d", f.Value)
+				}
 			}
-		default:
-			if usageField := reflect.ValueOf(flag).Elem().FieldByName("Usage"); usageField.IsValid() {
-				usage = usageField.String()
-			}
+
+			info.Flags = append(info.Flags, flagInfo)
 		}
 
-		flags = append(flags, FlagInfo{
-			Name:        strings.Join(names, ", "),
-			Usage:       usage,
-			DefaultText: defaultText,
-			Required:    required,
-		})
+		result = append(result, info)
 	}
 
-	var subcommands []CommandInfo
-	for _, subcmd := range cmd.Commands {
-		subcommands = append(subcommands, convertCommandToInfo(subcmd))
-	}
+	return result
+}
 
-	return CommandInfo{
-		Name:        cmd.Name,
-		Usage:       cmd.Usage,
-		Description: cmd.Description,
-		ArgsUsage:   cmd.ArgsUsage,
-		Flags:       flags,
-		Subcommands: subcommands,
+// flagUsage gets the usage text from a flag
+func flagUsage(flag cli.Flag) string {
+	switch f := flag.(type) {
+	case *cli.StringFlag:
+		return f.Usage
+	case *cli.BoolFlag:
+		return f.Usage
+	case *cli.IntFlag:
+		return f.Usage
+	default:
+		return ""
 	}
 }
 
-func (h *CommandHandler) GetEmulatorCommands(c *gin.Context) {
-	commands := convertCommandToInfo(h.emuCmd)
-	c.JSON(http.StatusOK, gin.H{
-		"commands": commands,
-	})
+// GetCommandsForNodeType returns command infos for a node type
+func (s *CommandStore) GetCommandsForNodeType(nodeType string) []models.CommandInfo {
+	if commands, ok := s.commandCache[nodeType]; ok {
+		return commands
+	}
+	return []models.CommandInfo{}
 }
 
-func (h *CommandHandler) GetUeCommands(c *gin.Context) {
-	ueId := c.Param("ueId")
-	if ueId == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "UE ID is required",
-		})
-		return
+// GetObjectsOfType returns objects of a specific type
+func (s *CommandStore) GetObjectsOfType(objectType string) ([]string, error) {
+	switch objectType {
+	case "ue":
+		return s.eApi.ListUes(), nil
+	case "gnb":
+		return s.eApi.ListGnbs(), nil
+	case "emulator":
+		return []string{"emulator"}, nil
+	default:
+		return nil, errors.New("invalid object type")
+	}
+}
+
+// ExecuteCommand executes a command request
+func (s *CommandStore) ExecuteCommand(req models.CommandRequest) (models.CommandResponse, error) {
+	// Check for help flag
+	hasHelpFlag := false
+	for _, arg := range req.Args {
+		if arg == "--help" || arg == "-h" {
+			hasHelpFlag = true
+			break
+		}
 	}
 
-	commands := convertCommandToInfo(h.ueCmd)
-	c.JSON(http.StatusOK, gin.H{
-		"commands": commands,
-		"ueId":     ueId,
-	})
-}
-
-func (h *CommandHandler) GetGnbCommands(c *gin.Context) {
-	gnbId := c.Param("gnbId")
-	if gnbId == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "GNB ID is required",
-		})
-		return
+	if hasHelpFlag {
+		// Generate help text directly
+		helpText := s.GenerateCommandHelp(req.NodeType, req.CommandPath)
+		return models.CommandResponse{
+			Response: helpText,
+		}, nil
 	}
 
-	commands := convertCommandToInfo(h.gnbCmd)
-	c.JSON(http.StatusOK, gin.H{
-		"commands": commands,
-		"gnbId":    gnbId,
-	})
-}
-
-func (h *CommandHandler) ListUes(c *gin.Context) {
-	ues := h.eApi.ListUes()
-	c.JSON(http.StatusOK, gin.H{
-		"ues": ues,
-	})
-}
-
-func (h *CommandHandler) ListGnbs(c *gin.Context) {
-	gnbs := h.eApi.ListGnbs()
-	c.JSON(http.StatusOK, gin.H{
-		"gnbs": gnbs,
-	})
-}
-
-// Process commands
-func (h *CommandHandler) ExecuteCommand(c *gin.Context) {
-	var req CommandRequest
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	// Tạo context và response channel
+	// Create response channel
 	rspCh := make(chan string, 1)
 	ctx := context.WithValue(context.Background(), "rsp", rspCh)
 
-	// Handle command args and flags
+	// Process command args
 	var cmdArgs []string
-
-	// Parse raw command or use args + flags đã chỉ định
 	if req.RawCommand != "" {
 		cmdArgs = strings.Fields(req.RawCommand)
 	} else {
-		// Use command path
 		cmdArgs = []string{req.CommandPath}
+		cmdArgs = append(cmdArgs, req.Args...)
+	}
 
-		// Add arguments
-		if len(req.Args) > 0 {
-			cmdArgs = append(cmdArgs, req.Args...)
+	// Execute appropriate command
+	var err error
+	switch req.NodeType {
+	case "emulator":
+		err = s.emuCmd.Run(ctx, append([]string{"emulator"}, cmdArgs...))
+	case "ue":
+		err = s.ueCmd.Run(ctx, append([]string{"ue"}, cmdArgs...))
+	case "gnb":
+		err = s.gnbCmd.Run(ctx, append([]string{"gnb"}, cmdArgs...))
+	default:
+		return models.CommandResponse{}, errors.New("invalid node type")
+	}
+
+	if err != nil {
+		return models.CommandResponse{}, err
+	}
+
+	// Get response from channel
+	response := <-rspCh
+
+	return models.CommandResponse{
+		Response: response,
+	}, nil
+}
+
+// GenerateCommandHelp generates help text for a command
+func (s *CommandStore) GenerateCommandHelp(nodeType, commandName string) string {
+	var cmd *cli.Command
+
+	// Find the command
+	switch nodeType {
+	case "emulator":
+		for _, c := range s.emuCmd.Commands {
+			if c.Name == commandName {
+				cmd = c
+				break
+			}
 		}
-
-		// Add flags
-		for name, value := range req.Flags {
-			if value != "" {
-				cmdArgs = append(cmdArgs, "--"+name, value)
-			} else {
-				cmdArgs = append(cmdArgs, "--"+name)
+	case "ue":
+		for _, c := range s.ueCmd.Commands {
+			if c.Name == commandName {
+				cmd = c
+				break
+			}
+		}
+	case "gnb":
+		for _, c := range s.gnbCmd.Commands {
+			if c.Name == commandName {
+				cmd = c
+				break
 			}
 		}
 	}
 
-	// Execute commands by the type of node
-	var err error
-
-	switch req.NodeType {
-	case "emulator":
-		err = h.emuCmd.Run(ctx, append([]string{"emulator"}, cmdArgs...))
-	case "ue":
-		err = h.ueCmd.Run(ctx, append([]string{"ue"}, cmdArgs...))
-	case "gnb":
-		err = h.gnbCmd.Run(ctx, append([]string{"gnb"}, cmdArgs...))
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid node type",
-		})
-		return
+	if cmd == nil {
+		return "No help available for this command"
 	}
 
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
-		return
+	var sb strings.Builder
+
+	sb.WriteString(cmd.Name)
+	if cmd.ArgsUsage != "" {
+		sb.WriteString(" ")
+		sb.WriteString(cmd.ArgsUsage)
+	} else {
+		sb.WriteString(" [command [command options]]")
+	}
+	sb.WriteString("\n\n")
+
+	if cmd.Description != "" {
+		sb.WriteString(cmd.Description)
+		sb.WriteString("\n\n")
 	}
 
-	//Read the response from channel
-	response := <-rspCh
-	c.JSON(http.StatusOK, gin.H{
-		"response": response,
-	})
+	if len(cmd.Flags) > 0 {
+		sb.WriteString("Options:\n")
+		for _, flag := range cmd.Flags {
+			names := strings.Join(flag.Names(), ", ")
+			usage := flagUsage(flag)
+
+			sb.WriteString(fmt.Sprintf("   --%s:  %s\n", names, usage))
+		}
+	}
+
+	return sb.String()
 }

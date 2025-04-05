@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"test_monitor/server/api"
 	"test_monitor/server/handlers"
@@ -17,8 +16,8 @@ func main() {
 	r := gin.Default()
 
 	// Initialize handlers
-	cmdHandler := handlers.NewCommandHandler(eApi, uApi, gApi)
-	ctxHandler := handlers.NewContextHandler(eApi)
+	cmdHandler := handlers.NewCommandStore(eApi, uApi, gApi)
+	ctxHandler := handlers.NewContextHandler(cmdHandler)
 
 	// CORS middleware
 	r.Use(func(c *gin.Context) {
@@ -32,35 +31,32 @@ func main() {
 		c.Next()
 	})
 
-	// API routes emulator
-	emulatorGroup := r.Group("/api/emulator")
-	{
-		emulatorGroup.GET("/commands", cmdHandler.GetEmulatorCommands)
-		emulatorGroup.GET("/ues", cmdHandler.ListUes)
-		emulatorGroup.GET("/gnbs", cmdHandler.ListGnbs)
-	}
+	// API routes
+	r.GET("/api/context", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"message": "Context API ready",
+		})
+	})
 
-	// API routes UE context
-	ueGroup := r.Group("/api/ue/:ueId")
-	{
-		ueGroup.GET("/commands", cmdHandler.GetUeCommands)
-	}
+	r.GET("/api/context/path/:path", ctxHandler.GetContextByPath)
+	r.GET("/api/context/commands/:path", ctxHandler.GetContextCommands)
+	r.GET("/api/context/node/:type", func(c *gin.Context) {
+		nodeType := c.Param("type")
+		objects, err := cmdHandler.GetObjectsOfType(nodeType)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{
+			"type":    nodeType,
+			"objects": objects,
+		})
+	})
+	r.GET("/api/context/node/:type/:name/commands", ctxHandler.GetNodeCommands)
 
-	// API routes GNB context
-	gnbGroup := r.Group("/api/gnb/:gnbId")
-	{
-		gnbGroup.GET("/commands", cmdHandler.GetGnbCommands)
-	}
+	r.POST("/api/context/navigate", ctxHandler.NavigateContext)
+	r.POST("/api/exec", ctxHandler.ExecuteCommand)
 
-	// API to process command overall
-	r.POST("/api/exec", cmdHandler.ExecuteCommand)
-
-	// API context handling
-	r.GET("/api/context", ctxHandler.GetAvailableContexts)
-	r.GET("/api/context/:type", ctxHandler.GetContextByType)
-
-	fmt.Println("Server started on :4000")
-	if err := r.Run(":4000"); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
-	}
+	log.Println("Starting server on :4000")
+	r.Run(":4000")
 }

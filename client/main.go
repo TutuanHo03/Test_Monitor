@@ -10,47 +10,14 @@ import (
 	"os"
 	"strings"
 
+	"test_monitor/models"
+
 	"github.com/abiosoft/ishell"
 )
 
-// CommandInfo - Định nghĩa cấu trúc thông tin lệnh giống với server
-type CommandInfo struct {
-	Name        string        `json:"name"`
-	Usage       string        `json:"usage"`
-	Description string        `json:"description"`
-	ArgsUsage   string        `json:"argsUsage"`
-	Flags       []FlagInfo    `json:"flags"`
-	Subcommands []CommandInfo `json:"subcommands,omitempty"`
-}
-
-// FlagInfo - Định nghĩa cấu trúc thông tin flag giống với server
-type FlagInfo struct {
-	Name        string `json:"name"`
-	Usage       string `json:"usage"`
-	DefaultText string `json:"defaultText,omitempty"`
-	Required    bool   `json:"required"`
-}
-
-// CommandRequest - Cấu trúc yêu cầu thực thi lệnh
-type CommandRequest struct {
-	NodeType    string            `json:"nodeType"`
-	NodeName    string            `json:"nodeName"`
-	CommandPath string            `json:"commandPath"`
-	RawCommand  string            `json:"rawCommand"`
-	Args        []string          `json:"args,omitempty"`
-	Flags       map[string]string `json:"flags,omitempty"`
-}
-
-// Structure of context stack to organize context
-type Context struct {
-	Type      string // "root", "server", "context_type", "node"
-	Name      string // tên của context: emulator, ue, gnb, hoặc tên node cụ thể
-	ServerURL string // URL của server đang kết nối
-}
-
 var (
 	serverURL    string
-	contextStack []Context
+	contextStack []models.ClientContext
 )
 
 func main() {
@@ -58,31 +25,34 @@ func main() {
 
 	shell := ishell.New()
 
-	// Khởi tạo context stack với root context
-	contextStack = []Context{{Type: "root", Name: "root", ServerURL: ""}}
+	contextStack = []models.ClientContext{
+		{
+			Type:     "root",
+			Name:     "root",
+			Commands: []string{"help", "clear", "exit", "connect"},
+		},
+	}
 
-	setupRootCommands(shell)
+	setupCommands(shell, "root")
 
 	shell.Println("Interactive CLI Client")
 	shell.SetPrompt(">>> ")
 
-	// Bắt đầu shell
 	shell.Run()
 }
 
-// setupRootCommands thiết lập các lệnh ở root context
-func setupRootCommands(shell *ishell.Shell) {
+// setupCommands sets up the commands for the shell based on the context
+// để tránh đệ quy
+func setupCommands(shell *ishell.Shell, contextType string) {
+	for _, cmd := range []string{"help", "clear", "exit", "back", "disconnect", "use", "select", "connect"} {
+		shell.DeleteCmd(cmd)
+	}
 
+	// Add some basic commands
 	shell.AddCmd(&ishell.Cmd{
 		Name: "help",
 		Help: "display help",
-		Func: func(c *ishell.Context) {
-			c.Println("Commands:")
-			c.Println("  clear        clear the screen")
-			c.Println("  connect      Connect to a server [connect http://localhost:4000]")
-			c.Println("  exit         exit the program")
-			c.Println("  help         display help")
-		},
+		Func: displayHelp(shell),
 	})
 
 	shell.AddCmd(&ishell.Cmd{
@@ -102,356 +72,319 @@ func setupRootCommands(shell *ishell.Shell) {
 		},
 	})
 
-	shell.AddCmd(&ishell.Cmd{
-		Name:     "connect",
-		Help:     "Connect to a server [connect http://localhost:4000]",
-		LongHelp: "Connect to a server using URL. Example: connect http://localhost:4000",
-		Func: func(c *ishell.Context) {
-			if len(c.Args) < 1 {
-				c.Println("Usage: connect <server-url>")
-				return
-			}
-			url := c.Args[0]
-			if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-				url = "http://" + url
-			}
-
-			resp, err := http.Get(url + "/api/context")
-			if err != nil {
-				c.Printf("Failed to connect to server: %v\n", err)
-				return
-			}
-			defer resp.Body.Close()
-
-			// Chuyển sang server context
-			serverURL = url
-			contextStack = append(contextStack, Context{Type: "server", Name: "server", ServerURL: url})
-			setupServerCommands(shell)
-			c.Printf("Connected to server: %s, type help to see commands\n", url)
-		},
-	})
-}
-
-// setupServerCommands thiết lập các lệnh khi đã kết nối tới server
-func setupServerCommands(shell *ishell.Shell) {
-
-	shell.AddCmd(&ishell.Cmd{
-		Name: "help",
-		Help: "Display help",
-		Func: func(c *ishell.Context) {
-			c.Println("Commands:")
-			c.Println("  back                 Go back to previous context")
-			c.Println("  clear                Clear the screen")
-			c.Println("  disconnect           Disconnect server")
-			c.Println("  exit                 Exit the client")
-			c.Println("  help                 Display help")
-			c.Println("  list                 List available objects [list ue|gnb]")
-			c.Println("  use                  Select a context to use [use emulator|ue|gnb]")
-		},
-	})
-
-	shell.AddCmd(&ishell.Cmd{
-		Name: "clear",
-		Help: "Clear the screen",
-		Func: func(c *ishell.Context) {
-			c.ClearScreen()
-		},
-	})
-
-	shell.AddCmd(&ishell.Cmd{
-		Name: "exit",
-		Help: "Exit the client",
-		Func: func(c *ishell.Context) {
-			c.Println("Goodbye!")
-			os.Exit(0)
-		},
-	})
-
-	shell.AddCmd(&ishell.Cmd{
-		Name: "disconnect",
-		Help: "Disconnect server",
-		Func: func(c *ishell.Context) {
-			c.Printf("Disconnected from %s\n", serverURL)
-			serverURL = ""
-			// Trở về root context
-			contextStack = contextStack[:1] // Chỉ giữ lại root context
-			setupRootCommands(shell)
-			shell.SetPrompt(">>> ")
-		},
-	})
-
-	shell.AddCmd(&ishell.Cmd{
-		Name: "back",
-		Help: "Go back to previous context",
-		Func: func(c *ishell.Context) {
-			if len(contextStack) > 1 {
-				// Xóa context hiện tại
-				contextStack = contextStack[:len(contextStack)-1]
-				previousContext := contextStack[len(contextStack)-1]
-
-				// Setup lại commands dựa trên context trước đó
-				if previousContext.Type == "root" {
-					setupRootCommands(shell)
-					shell.SetPrompt(">>> ")
-				} else if previousContext.Type == "server" {
-					setupServerCommands(shell)
-					shell.SetPrompt(">>> ")
-				} else if previousContext.Type == "context_type" {
-					setupContextTypeCommands(shell, previousContext.Name)
-					shell.SetPrompt(previousContext.Name + " >>> ")
-				}
-			} else {
-				c.Println("Already at root context")
-			}
-		},
-	})
-
-	// Thêm lệnh list
-	shell.AddCmd(&ishell.Cmd{
-		Name: "list",
-		Help: "List available objects [list ue|gnb]",
-		Func: func(c *ishell.Context) {
-			if len(c.Args) < 1 {
-				c.Println("Usage: list <type>")
-				c.Println("Types: ue, gnb")
-				return
-			}
-
-			objType := c.Args[0]
-			objects, err := getObjectsByType(objType)
-			if err != nil {
-				c.Printf("Error: %v\n", err)
-				return
-			}
-
-			for _, obj := range objects {
-				c.Printf("  - %s\n", obj)
-			}
-		},
-	})
-
-	// Thêm lệnh use
-	shell.AddCmd(&ishell.Cmd{
-		Name: "use",
-		Help: "Select a context to use [use emulator | ue | gnb]",
-		Func: func(c *ishell.Context) {
-			if len(c.Args) < 1 {
-				c.Println("Usage: use <context-type>")
-				c.Println("Context types: emulator, ue, gnb")
-				return
-			}
-
-			contextType := c.Args[0]
-			if contextType != "emulator" && contextType != "ue" && contextType != "gnb" {
-				c.Println("Invalid context type. Use 'emulator', 'ue', or 'gnb'")
-				return
-			}
-
-			// Nếu chọn context type
-			if contextType == "ue" || contextType == "gnb" {
-				// Lấy danh sách đối tượng
-				objects, err := getObjectsByType(contextType)
-				if err != nil {
-					c.Printf("Error: %v\n", err)
+	// Add commands based on context type
+	switch contextType {
+	case "root":
+		// Add connect command for root context
+		shell.AddCmd(&ishell.Cmd{
+			Name:     "connect",
+			Help:     "Connect to a server [connect http://localhost:4000]",
+			LongHelp: "Connect to a server using URL. Example: connect http://localhost:4000",
+			Func: func(c *ishell.Context) {
+				if len(c.Args) < 1 {
+					c.Println("Usage: connect <server-url>")
 					return
 				}
+				url := c.Args[0]
+				connectToServer(shell, url)
+			},
+		})
 
-				c.Printf("Available %s objects:\n", contextType)
-				for _, obj := range objects {
-					c.Printf("  - %s\n", obj)
+	case "server":
+		// Add command disconnect and back for server context
+		shell.AddCmd(&ishell.Cmd{
+			Name: "back",
+			Help: "Go back to previous context",
+			Func: func(c *ishell.Context) {
+				navigateContext(shell, "back", nil)
+			},
+		})
+
+		shell.AddCmd(&ishell.Cmd{
+			Name: "disconnect",
+			Help: "Disconnect from server",
+			Func: func(c *ishell.Context) {
+				navigateContext(shell, "disconnect", nil)
+			},
+		})
+
+		// Add command use for server context
+		shell.AddCmd(&ishell.Cmd{
+			Name: "use",
+			Help: "Select a context to use [use emulator | ue | gnb]",
+			Func: func(c *ishell.Context) {
+				if len(c.Args) < 1 {
+					c.Println("Usage: use <context-type>")
+					c.Println("Context types: emulator, ue, gnb")
+					return
 				}
+				navigateContext(shell, "use", c.Args)
+			},
+		})
 
-				// Thêm context mới vào stack
-				contextStack = append(contextStack, Context{Type: "context_type", Name: contextType, ServerURL: serverURL})
-				setupContextTypeCommands(shell, contextType)
-				shell.SetPrompt(contextType + " >>> ")
-			} else {
-				// Đối với emulator, chuyển trực tiếp đến node
-				c.Println("Switching to emulator context")
-				// Lấy commands và thiết lập shell
-				setupNodeCommands(shell, "emulator", "emulator")
-				shell.SetPrompt("emulator >>> ")
-				// Thêm context vào stack
-				contextStack = append(contextStack,
-					Context{Type: "context_type", Name: "emulator", ServerURL: serverURL},
-					Context{Type: "node", Name: "emulator", ServerURL: serverURL})
-			}
-		},
-	})
+	case "context_set":
+		// Add command back and disconnect for context_set
+		shell.AddCmd(&ishell.Cmd{
+			Name: "back",
+			Help: "Go back to previous context",
+			Func: func(c *ishell.Context) {
+				navigateContext(shell, "back", nil)
+			},
+		})
+
+		shell.AddCmd(&ishell.Cmd{
+			Name: "disconnect",
+			Help: "Disconnect from server",
+			Func: func(c *ishell.Context) {
+				navigateContext(shell, "disconnect", nil)
+			},
+		})
+
+		// Add command select for context_set
+		shell.AddCmd(&ishell.Cmd{
+			Name: "select",
+			Help: "Select a node to interact with [select <node-name>]",
+			Func: func(c *ishell.Context) {
+				if len(c.Args) < 1 {
+					c.Println("Usage: select <node-name>")
+					return
+				}
+				navigateContext(shell, "select", c.Args)
+			},
+		})
+
+	case "node":
+		// Add command back and disconnect for node context
+		shell.AddCmd(&ishell.Cmd{
+			Name: "back",
+			Help: "Go back to previous context",
+			Func: func(c *ishell.Context) {
+				navigateContext(shell, "back", nil)
+			},
+		})
+
+		shell.AddCmd(&ishell.Cmd{
+			Name: "disconnect",
+			Help: "Disconnect from server",
+			Func: func(c *ishell.Context) {
+				navigateContext(shell, "disconnect", nil)
+			},
+		})
+	}
 }
 
-// setupContextTypeCommands thiết lập các lệnh cho context type (ue hoặc gnb)
-func setupContextTypeCommands(shell *ishell.Shell, contextType string) {
-	shell.AddCmd(&ishell.Cmd{
-		Name: "help",
-		Help: "display this help",
-		Func: func(c *ishell.Context) {
+// connectToServer handles server connection
+func connectToServer(shell *ishell.Shell, url string) {
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		url = "http://" + url
+	}
+
+	// Validate server URL
+	serverURL = url
+
+	// Check server connection
+	resp, err := http.Get(url + "/api/context")
+	if err != nil {
+		shell.Printf("Failed to connect to server: %v\n", err)
+		serverURL = "" // Reset if failing
+		return
+	}
+	defer resp.Body.Close()
+
+	// Navigate to new context
+	navigateContext(shell, "connect", []string{url})
+}
+
+// displayHelp generates help text for the current context
+func displayHelp(_ *ishell.Shell) func(*ishell.Context) {
+	return func(c *ishell.Context) {
+		currentContext := getCurrentContext()
+
+		switch currentContext.Type {
+		case "root":
+			c.Println("Commands:")
+			c.Println("  clear        clear the screen")
+			c.Println("  connect      Connect to a server [connect http://localhost:4000]")
+			c.Println("  exit         exit the program")
+			c.Println("  help         display help")
+
+		case "server":
+			c.Println("Commands:")
+			c.Println("  back                Go back to previous context")
+			c.Println("  clear               Clear the screen")
+			c.Println("  disconnect          Disconnect server")
+			c.Println("  exit                Exit the client")
+			c.Println("  help                Display help")
+			c.Println("  use                 Select a context to use [use emulator | ue | gnb]")
+
+		case "context_set":
 			c.Println("Available commands :")
-			c.Println("  select       Select a node to interact with [select <node-name>]")
+			c.Println("  select              Select a node to interact with [select <node-name>]")
 			c.Println("")
 			c.Println("General commands:")
-			c.Println("  back         Go back to previous context")
-			c.Println("  clear        Clear the screen")
-			c.Println("  exit         Exit the client")
-			c.Println("  help         Display this help")
-		},
-	})
+			c.Println("  back                Go back to previous context")
+			c.Println("  clear               Clear the screen")
+			c.Println("  disconnect          Disconnect server")
+			c.Println("  exit                Exit the client")
+			c.Println("  help                Display this help")
 
-	shell.AddCmd(&ishell.Cmd{
-		Name: "clear",
-		Help: "clear the screen",
-		Func: func(c *ishell.Context) {
-			c.ClearScreen()
-		},
-	})
+		case "node":
+			c.Printf("Available commands for %s :\n", currentContext.Name)
 
-	shell.AddCmd(&ishell.Cmd{
-		Name: "exit",
-		Help: "Exit the client",
-		Func: func(c *ishell.Context) {
-			c.Println("Goodbye!")
-			os.Exit(0)
-		},
-	})
-
-	shell.AddCmd(&ishell.Cmd{
-		Name: "back",
-		Help: "Go back to previous context",
-		Func: func(c *ishell.Context) {
-			if len(contextStack) > 1 {
-				// Xóa context hiện tại
-				contextStack = contextStack[:len(contextStack)-1]
-				previousContext := contextStack[len(contextStack)-1]
-
-				// Setup lại commands dựa trên context trước đó
-				if previousContext.Type == "server" {
-					setupServerCommands(shell)
-					shell.SetPrompt(">>> ")
-				} else if previousContext.Type == "context_type" {
-					setupContextTypeCommands(shell, previousContext.Name)
-					shell.SetPrompt(previousContext.Name + " >>> ")
+			// Get command info from server
+			commands := requestCommands(currentContext.NodeType, currentContext.Name)
+			if len(commands) > 0 {
+				for _, cmd := range commands {
+					c.Printf("  %-16s %s\n", cmd.Name, cmd.Usage)
 				}
-			}
-		},
-	})
-
-	shell.AddCmd(&ishell.Cmd{
-		Name: "select",
-		Help: "Select a node to interact with [select <node-name>]",
-		Func: func(c *ishell.Context) {
-			if len(c.Args) < 1 {
-				c.Println("Usage: select <node-name>")
-				return
-			}
-
-			nodeName := c.Args[0]
-			objects, err := getObjectsByType(contextType)
-			if err != nil {
-				c.Printf("Error: %v\n", err)
-				return
-			}
-
-			nodeExists := false
-			for _, obj := range objects {
-				if obj == nodeName {
-					nodeExists = true
-					break
+			} else {
+				// Fallback if no command info available
+				for _, cmd := range currentContext.Commands {
+					if cmd != "help" && cmd != "clear" && cmd != "exit" && cmd != "back" && cmd != "disconnect" {
+						c.Printf("  %-16s\n", cmd)
+					}
 				}
 			}
 
-			if !nodeExists {
-				c.Printf("Node '%s' not found\n", nodeName)
-				return
-			}
-
-			// Thiết lập commands cho node
-			setupNodeCommands(shell, contextType, nodeName)
-			contextStack = append(contextStack, Context{Type: "node", Name: nodeName, ServerURL: serverURL})
-			shell.SetPrompt(nodeName + " >>> ")
-		},
-	})
+			c.Println("")
+			c.Println("General commands:")
+			c.Println("  back                Go back to previous context")
+			c.Println("  clear               Clear the screen")
+			c.Println("  disconnect          Disconnect server")
+			c.Println("  exit                Exit the client")
+			c.Println("  help                Display this help")
+		}
+	}
 }
 
-// setupNodeCommands thiết lập các lệnh cho một node cụ thể
-func setupNodeCommands(shell *ishell.Shell, nodeType, nodeName string) {
-	// Lấy commands từ server
-	commands, err := getCommands(nodeType, nodeName)
+// navigateContext handles navigation between contexts
+func navigateContext(shell *ishell.Shell, command string, args []string) {
+	currentContext := getCurrentContext()
+
+	// Prepare request with detailed context info
+	req := models.NavigationRequest{
+		CurrentContext: currentContext.Name,
+		Command:        command,
+		Args:           args,
+		ServerURL:      serverURL,
+		NodeType:       currentContext.NodeType,
+	}
+
+	if command == "connect" && (serverURL == "" || len(contextStack) <= 1) {
+		if len(args) < 1 {
+			shell.Println("URL is required for connect command")
+			return
+		}
+
+		serverURL = args[0]
+		if !strings.HasPrefix(serverURL, "http://") && !strings.HasPrefix(serverURL, "https://") {
+			serverURL = "http://" + serverURL
+		}
+	}
+
+	// Endpoint cho request
+	endpoint := serverURL + "/api/context/navigate"
+
+	// send request
+	jsonData, err := json.Marshal(req)
 	if err != nil {
-		fmt.Printf("Error getting commands: %v\n", err)
+		shell.Printf("Error preparing request: %v\n", err)
 		return
 	}
 
-	shell.AddCmd(&ishell.Cmd{
-		Name: "help",
-		Help: "display this help",
-		Func: func(c *ishell.Context) {
-			c.Printf("Available commands for %s :\n", nodeName)
-			// Hiển thị các lệnh chuyên biệt
-			for _, cmd := range commands.Subcommands {
-				c.Printf("  %-12s %s\n", cmd.Name, cmd.Usage)
+	resp, err := http.Post(endpoint, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		shell.Printf("Error communicating with server: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Process response
+	var response models.NavigationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		shell.Printf("Error parsing response: %v\n", err)
+		return
+	}
+
+	if response.Error != "" {
+		shell.Printf("Error: %s\n", response.Error)
+		return
+	}
+
+	// Update context stack
+	if command == "back" || command == "disconnect" {
+		if len(contextStack) > 1 {
+			// Remove current context from stack
+			contextStack = contextStack[:len(contextStack)-1]
+
+			// Xử lý riêng cho disconnect
+			if command == "disconnect" {
+				// Reset root context
+				contextStack = contextStack[:1]
+				serverURL = ""
+
+				setupCommands(shell, "root")
+				shell.SetPrompt(">>> ")
+				shell.Println("Disconnected from server")
+				return
 			}
-			c.Println("")
-			c.Println("General commands:")
-			c.Println("  back        Go back to previous context")
-			c.Println("  clear        clear the screen")
-			c.Println("  exit         Exit the client")
-			c.Println("  help         display this help")
-		},
-	})
 
-	shell.AddCmd(&ishell.Cmd{
-		Name: "clear",
-		Help: "clear the screen",
-		Func: func(c *ishell.Context) {
-			c.ClearScreen()
-		},
-	})
+			currentContext = getCurrentContext()
+			setupCommands(shell, currentContext.Type)
+		} else {
+			shell.Println("Already at root context")
+			return
+		}
+	} else {
+		response.Context.ServerURL = serverURL
 
-	shell.AddCmd(&ishell.Cmd{
-		Name: "exit",
-		Help: "Exit the client",
-		Func: func(c *ishell.Context) {
-			c.Println("Goodbye!")
-			os.Exit(0)
-		},
-	})
+		if command == "use" && len(args) > 0 {
+			response.Context.NodeType = args[0]
+		}
 
-	shell.AddCmd(&ishell.Cmd{
-		Name: "back",
-		Help: "Go back to previous context",
-		Func: func(c *ishell.Context) {
-			if len(contextStack) > 1 {
-				// Xóa context hiện tại
-				contextStack = contextStack[:len(contextStack)-1]
-				previousContext := contextStack[len(contextStack)-1]
+		// Add new context to stack
+		contextStack = append(contextStack, response.Context)
 
-				// Setup lại commands dựa trên context trước đó
-				if previousContext.Type == "context_type" {
-					setupContextTypeCommands(shell, previousContext.Name)
-					shell.SetPrompt(previousContext.Name + " >>> ")
-				} else if previousContext.Type == "server" {
-					setupServerCommands(shell)
-					shell.SetPrompt(">>> ")
-				}
-			}
-		},
-	})
+		setupCommands(shell, response.Context.Type)
+	}
 
-	// Thêm các lệnh từ server
-	for _, cmd := range commands.Subcommands {
-		cmdInfo := cmd
+	// Update prompt
+	if response.Prompt != "" {
+		shell.SetPrompt(response.Prompt)
+	} else {
+		currentContext = getCurrentContext()
+		if currentContext.Type == "root" || currentContext.Type == "server" {
+			shell.SetPrompt(">>> ")
+		} else {
+			shell.SetPrompt(currentContext.Name + " >>> ")
+		}
+	}
+
+	if response.Message != "" {
+		shell.Println(response.Message)
+	}
+
+	// Setup node commands if applicable
+	if command == "select" || (command == "use" && args[0] == "emulator") {
+		setupNodeCommands(shell, response.Context, response.Commands)
+	}
+}
+
+// setupNodeCommands sets up commands for a specific node
+func setupNodeCommands(shell *ishell.Shell, context models.ClientContext, commands []models.CommandInfo) {
+	if len(commands) == 0 {
+		commands = requestCommands(context.NodeType, context.Name)
+	}
+
+	for _, cmdInfo := range commands {
+		info := cmdInfo
+
 		shell.AddCmd(&ishell.Cmd{
-			Name:     cmdInfo.Name,
-			Help:     cmdInfo.Usage,
-			LongHelp: generateLongHelp(cmdInfo),
+			Name:     info.Name,
+			Help:     info.Usage,
+			LongHelp: generateLongHelp(info),
 			Func: func(c *ishell.Context) {
-
-				if len(c.Args) > 0 && c.Args[0] == "--help" {
-					c.Println(generateLongHelp(cmdInfo))
-					return
-				}
-
-				result, err := execCmd(nodeType, nodeName, cmdInfo.Name, c.Args)
+				result, err := execCmd(context.NodeType, context.Name, info.Name, c.Args)
 				if err != nil {
 					c.Printf("Error: %v\n", err)
 					return
@@ -462,67 +395,74 @@ func setupNodeCommands(shell *ishell.Shell, nodeType, nodeName string) {
 	}
 }
 
-func getObjectsByType(objType string) ([]string, error) {
-	resp, err := http.Get(fmt.Sprintf("%s/api/context/%s", serverURL, objType))
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to server: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var response struct {
-		Type    string   `json:"type"`
-		Objects []string `json:"objects"`
+// requestCommands fetches command definitions from the server
+func requestCommands(nodeType, nodeName string) []models.CommandInfo {
+	if serverURL == "" {
+		return nil
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %v", err)
-	}
-
-	return response.Objects, nil
-}
-
-func getCommands(nodeType, nodeName string) (CommandInfo, error) {
-	var url string
-	switch nodeType {
-	case "emulator":
-		url = fmt.Sprintf("%s/api/emulator/commands", serverURL)
-	case "ue":
-		url = fmt.Sprintf("%s/api/ue/%s/commands", serverURL, nodeName)
-	case "gnb":
-		url = fmt.Sprintf("%s/api/gnb/%s/commands", serverURL, nodeName)
-	default:
-		return CommandInfo{}, fmt.Errorf("invalid node type: %s", nodeType)
-	}
+	url := fmt.Sprintf("%s/api/context/node/%s/%s/commands", serverURL, nodeType, nodeName)
 
 	resp, err := http.Get(url)
-	if err != nil {
-		return CommandInfo{}, fmt.Errorf("failed to connect to server: %v", err)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return nil
 	}
 	defer resp.Body.Close()
 
-	var response struct {
-		Commands CommandInfo `json:"commands"`
+	var commands []models.CommandInfo
+	if err := json.NewDecoder(resp.Body).Decode(&commands); err != nil {
+		return nil
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return CommandInfo{}, fmt.Errorf("failed to parse response: %v", err)
-	}
-
-	return response.Commands, nil
+	return commands
 }
 
+// execCmd executes a command on the server
 func execCmd(nodeType, nodeName, cmdName string, args []string) (string, error) {
-	cmdReq := CommandRequest{
+	// Separate args and flags
+	cmdArgs := []string{}
+	cmdFlags := []string{}
+
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--") || strings.HasPrefix(arg, "-") {
+			cmdFlags = append(cmdFlags, arg)
+		} else {
+			cmdArgs = append(cmdArgs, arg)
+		}
+	}
+
+	// Check for help flag
+	for _, flag := range cmdFlags {
+		if flag == "--help" || flag == "-h" {
+			cmdReq := models.CommandRequest{
+				NodeType:    nodeType,
+				NodeName:    nodeName,
+				CommandPath: cmdName,
+				Args:        []string{"--help"},
+			}
+
+			return sendCmd(cmdReq)
+		}
+	}
+
+	// Execute normal command with all args and flags
+	allArgs := append(cmdArgs, cmdFlags...)
+	cmdReq := models.CommandRequest{
 		NodeType:    nodeType,
 		NodeName:    nodeName,
 		CommandPath: cmdName,
-		Args:        args,
+		Args:        allArgs,
 	}
 
 	return sendCmd(cmdReq)
 }
 
-func sendCmd(cmdReq CommandRequest) (string, error) {
+// sendCmd sends a command request to the server
+func sendCmd(cmdReq models.CommandRequest) (string, error) {
+	if serverURL == "" {
+		return "", fmt.Errorf("not connected to a server")
+	}
+
 	jsonData, err := json.Marshal(cmdReq)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal command request: %v", err)
@@ -539,13 +479,9 @@ func sendCmd(cmdReq CommandRequest) (string, error) {
 		return "", fmt.Errorf("failed to read response: %v", err)
 	}
 
-	var response struct {
-		Response string `json:"response"`
-		Error    string `json:"error"`
-	}
-
+	var response models.CommandResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return "", fmt.Errorf("failed to parse response: %v", err)
+		return "", fmt.Errorf("failed to parse response: %v\nresponse body: %s", err, string(body))
 	}
 
 	if response.Error != "" {
@@ -555,8 +491,8 @@ func sendCmd(cmdReq CommandRequest) (string, error) {
 	return response.Response, nil
 }
 
-// generateLongHelp tạo help chi tiết cho lệnh
-func generateLongHelp(cmd CommandInfo) string {
+// generateLongHelp creates detailed help for a command
+func generateLongHelp(cmd models.CommandInfo) string {
 	var sb strings.Builder
 	sb.WriteString("\n")
 	sb.WriteString(cmd.Name)
@@ -585,4 +521,12 @@ func generateLongHelp(cmd CommandInfo) string {
 	}
 
 	return sb.String()
+}
+
+// getCurrentContext returns the current context
+func getCurrentContext() models.ClientContext {
+	if len(contextStack) > 0 {
+		return contextStack[len(contextStack)-1]
+	}
+	return models.ClientContext{Type: "root", Name: "root"}
 }
