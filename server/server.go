@@ -85,14 +85,11 @@ func (s *Server) setupRoutes() {
 	s.router.POST("/api/exec", s.ctxHandler.ExecuteCommand)
 }
 
-// Start khởi động server
 func (s *Server) Start() error {
 	address := fmt.Sprintf("%s:%s", s.config.Host, s.config.Port)
 	return s.router.Run(address)
 }
 
-// Shutdown thực hiện các bước dọn dẹp trước khi tắt server
 func (s *Server) Shutdown() {
-	// Thực hiện các bước dọn dẹp nếu cần
 	log.Println("Cleaning up resources...")
 }

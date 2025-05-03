@@ -107,9 +107,9 @@ func (s *CommandStore) initCommands() {
 					register := cmd.Bool("register")
 					success := s.eApi.AddUe(supi, register)
 					if success {
-						rspCh <- "UE added successfully"
+						rspCh <- fmt.Sprintf("UE %s added successfully to emulator", supi)
 					} else {
-						rspCh <- "Failed to add UE"
+						rspCh <- fmt.Sprintf("Failed to add UE %s to emulator", supi)
 					}
 					return nil
 				},
@@ -135,12 +135,21 @@ func (s *CommandStore) initCommands() {
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					rspCh := ctx.Value("rsp").(chan string)
+					nodeName, hasNode := GetNodeName(ctx)
 					isEmergency := cmd.Bool("emergency")
 					success := s.uApi.Register(isEmergency)
 					if success {
-						rspCh <- "UE registered successfully"
+						if hasNode {
+							rspCh <- fmt.Sprintf("UE %s registered successfully", nodeName)
+						} else {
+							rspCh <- "UE registered successfully"
+						}
 					} else {
-						rspCh <- "Failed to register UE"
+						if hasNode {
+							rspCh <- fmt.Sprintf("Failed to register UE %s", nodeName)
+						} else {
+							rspCh <- "Failed to register UE"
+						}
 					}
 					return nil
 				},
@@ -158,12 +167,21 @@ func (s *CommandStore) initCommands() {
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					rspCh := ctx.Value("rsp").(chan string)
+					nodeName, hasNode := GetNodeName(ctx)
 					deregType := uint8(cmd.Int("type"))
 					success := s.uApi.Deregister(deregType)
 					if success {
-						rspCh <- "UE deregistered successfully"
+						if hasNode {
+							rspCh <- fmt.Sprintf("UE %s deregistered successfully", nodeName)
+						} else {
+							rspCh <- "UE deregistered successfully"
+						}
 					} else {
-						rspCh <- "Failed to deregister UE"
+						if hasNode {
+							rspCh <- fmt.Sprintf("Failed to deregister UE %s", nodeName)
+						} else {
+							rspCh <- "Failed to deregister UE"
+						}
 					}
 					return nil
 				},
@@ -191,14 +209,23 @@ func (s *CommandStore) initCommands() {
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					rspCh := ctx.Value("rsp").(chan string)
+					nodeName, hasNode := GetNodeName(ctx)
 					slice := cmd.String("slice")
 					dn := cmd.String("dn")
 					sessionType := uint8(cmd.Int("type"))
 					success := s.uApi.CreateSession(slice, dn, sessionType)
 					if success {
-						rspCh <- "Session created successfully"
+						if hasNode {
+							rspCh <- fmt.Sprintf("Session created successfully for UE %s", nodeName)
+						} else {
+							rspCh <- "Session created successfully"
+						}
 					} else {
-						rspCh <- "Failed to create session"
+						if hasNode {
+							rspCh <- fmt.Sprintf("Failed to create session for UE %s", nodeName)
+						} else {
+							rspCh <- "Failed to create session"
+						}
 					}
 					return nil
 				},
@@ -219,6 +246,7 @@ func (s *CommandStore) initCommands() {
 				Description: "Release a UE connection from the gNB",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					rspCh := ctx.Value("rsp").(chan string)
+					nodeName, hasNode := GetNodeName(ctx)
 					args := cmd.Args().Slice()
 					if len(args) < 1 {
 						rspCh <- "Error: UE ID is required"
@@ -227,9 +255,17 @@ func (s *CommandStore) initCommands() {
 					ueId := args[0]
 					success := s.gApi.ReleaseUe(ueId)
 					if success {
-						rspCh <- "UE released successfully"
+						if hasNode {
+							rspCh <- fmt.Sprintf("UE %s released successfully from gNB %s", ueId, nodeName)
+						} else {
+							rspCh <- fmt.Sprintf("UE %s released successfully", ueId)
+						}
 					} else {
-						rspCh <- "Failed to release UE"
+						if hasNode {
+							rspCh <- fmt.Sprintf("Failed to release UE %s from gNB %s", ueId, nodeName)
+						} else {
+							rspCh <- fmt.Sprintf("Failed to release UE %s", ueId)
+						}
 					}
 					return nil
 				},
@@ -248,6 +284,7 @@ func (s *CommandStore) initCommands() {
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					rspCh := ctx.Value("rsp").(chan string)
+					nodeName, hasNode := GetNodeName(ctx)
 					args := cmd.Args().Slice()
 					if len(args) < 1 {
 						rspCh <- "Error: UE ID is required"
@@ -257,9 +294,21 @@ func (s *CommandStore) initCommands() {
 					sessionId := uint8(cmd.Int("id"))
 					success := s.gApi.ReleaseSession(ueId, sessionId)
 					if success {
-						rspCh <- "Session released successfully"
+						if hasNode {
+							rspCh <- fmt.Sprintf("Session %d for UE %s released successfully from gNB %s",
+								sessionId, ueId, nodeName)
+						} else {
+							rspCh <- fmt.Sprintf("Session %d for UE %s released successfully",
+								sessionId, ueId)
+						}
 					} else {
-						rspCh <- "Failed to release session"
+						if hasNode {
+							rspCh <- fmt.Sprintf("Failed to release session %d for UE %s from gNB %s",
+								sessionId, ueId, nodeName)
+						} else {
+							rspCh <- fmt.Sprintf("Failed to release session %d for UE %s",
+								sessionId, ueId)
+						}
 					}
 					return nil
 				},
@@ -375,6 +424,7 @@ func (s *CommandStore) ExecuteCommand(req models.CommandRequest) (models.Command
 	// Create response channel
 	rspCh := make(chan string, 1)
 	ctx := context.WithValue(context.Background(), "rsp", rspCh)
+	ctx = context.WithValue(ctx, "nodename", req.NodeName)
 
 	// Process command args
 	var cmdArgs []string
@@ -470,4 +520,12 @@ func (s *CommandStore) GenerateCommandHelp(nodeType, commandName string) string 
 	}
 
 	return sb.String()
+}
+
+func GetNodeName(ctx context.Context) (string, bool) {
+	val := ctx.Value("nodename")
+	if nodename, ok := val.(string); ok {
+		return nodename, true
+	}
+	return "", false
 }

@@ -33,10 +33,6 @@ func main() {
 		fmt.Println("Warning: no-color flag is set but not yet implemented")
 	}
 
-	fmt.Println("\nInteractive CLI Client")
-	fmt.Println("Type 'help' to see available commands")
-	fmt.Println("Type 'connect http://localhost:4000' to connect to a server")
-
 	// Chạy client ở chế độ tương tác
 	cli.Run()
 }

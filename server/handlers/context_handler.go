@@ -233,12 +233,10 @@ func (h *ContextHandler) NavigateContext(c *gin.Context) {
 	if req.CurrentContext != "" && req.CurrentContext != "root" {
 		currentCtx, exists = h.contextMap[contextKey]
 
-		// Nếu không tìm thấy, thử tìm không có prefix nodeType
 		if !exists {
 			currentCtx, exists = h.contextMap[req.CurrentContext]
 		}
 
-		// Log để debug
 		if !exists {
 			fmt.Printf("Context not found: %s (tried keys: %s, %s)\n",
 				req.CurrentContext, contextKey, req.CurrentContext)
@@ -280,7 +278,6 @@ func (h *ContextHandler) NavigateContext(c *gin.Context) {
 	case "back":
 		if currentCtx != nil && currentCtx.Parent != nil {
 			newCtx = currentCtx.Parent
-			// Sửa message để hiển thị tên context đúng
 			if newCtx.Type == ServerType {
 				message = "Back to server context"
 			} else {
@@ -421,7 +418,6 @@ func (h *ContextHandler) NavigateContext(c *gin.Context) {
 
 // findContext retrieves a context from the context map
 func (h *ContextHandler) findContext(path string, nodeType string) (*Context, bool) {
-	// If having path and nodeType, try to find  nodeType prefix first
 	if nodeType != "" && path != "" && nodeType != path {
 		contextKey := nodeType + ":" + path
 		if ctx, exists := h.contextMap[contextKey]; exists {

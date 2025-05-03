@@ -1,4 +1,3 @@
-// Package client provides an interactive CLI client for interacting with Test_Monitor server
 package client
 
 import (
@@ -54,8 +53,6 @@ func (c *Client) ConnectWithHostAndPort(host string, port string) {
 	c.ConnectToServer(url)
 }
 
-// ConnectWithPort automatically connects to localhost with the specified port
-// This is kept for backward compatibility
 func (c *Client) ConnectWithPort(port string) {
 	c.ConnectWithHostAndPort("localhost", port)
 }
@@ -96,7 +93,7 @@ func (c *Client) setupCommands(contextType string) {
 	case "root":
 		c.shell.AddCmd(&ishell.Cmd{
 			Name:     "connect",
-			Help:     "Connect to a server [connect http://localhost:4000]",
+			Help:     "Connect to a MSSim [connect http://localhost:4000]",
 			LongHelp: "Connect to a server using URL. Example: connect http://localhost:4000",
 			Func: func(ctx *ishell.Context) {
 				if len(ctx.Args) < 1 {
@@ -192,10 +189,8 @@ func (c *Client) ConnectToServer(url string) {
 		url = "http://" + url
 	}
 
-	// Validate server URL
 	c.serverURL = url
 
-	// Check server connection
 	resp, err := http.Get(url + "/api/context")
 	if err != nil {
 		c.shell.Printf("Failed to connect to server: %v\n", err)
@@ -204,7 +199,6 @@ func (c *Client) ConnectToServer(url string) {
 	}
 	defer resp.Body.Close()
 
-	// Navigate to new context
 	c.navigateContext("connect", []string{url})
 }
 
@@ -217,7 +211,7 @@ func (c *Client) displayHelp() func(*ishell.Context) {
 		case "root":
 			ctx.Println("Commands:")
 			ctx.Println("  clear        clear the screen")
-			ctx.Println("  connect      Connect to a server [connect http://localhost:4000]")
+			ctx.Println("  connect      Connect to a MSSim [connect http://localhost:4000]")
 			ctx.Println("  exit         exit the program")
 			ctx.Println("  help         display help")
 
@@ -243,8 +237,6 @@ func (c *Client) displayHelp() func(*ishell.Context) {
 
 		case "node":
 			ctx.Printf("Available commands for %s :\n", currentContext.Name)
-
-			// Get command info from server
 			commands := c.requestCommands(currentContext.NodeType, currentContext.Name)
 			if len(commands) > 0 {
 				for _, cmd := range commands {
@@ -274,7 +266,6 @@ func (c *Client) displayHelp() func(*ishell.Context) {
 func (c *Client) navigateContext(command string, args []string) {
 	currentContext := c.getCurrentContext()
 
-	// Prepare request with detailed context info
 	req := models.NavigationRequest{
 		CurrentContext: currentContext.Name,
 		Command:        command,
@@ -295,7 +286,6 @@ func (c *Client) navigateContext(command string, args []string) {
 		}
 	}
 
-	// Endpoint for request
 	endpoint := c.serverURL + "/api/context/navigate"
 
 	// send request
@@ -327,7 +317,6 @@ func (c *Client) navigateContext(command string, args []string) {
 	// Update context stack
 	if command == "back" || command == "disconnect" {
 		if len(c.contextStack) > 1 {
-			// Remove current context from stack
 			c.contextStack = c.contextStack[:len(c.contextStack)-1]
 
 			// Special handling for disconnect
