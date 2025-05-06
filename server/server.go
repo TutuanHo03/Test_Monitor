@@ -3,8 +3,7 @@ package server
 import (
 	"fmt"
 	"log"
-	"test_monitor/server/api"
-	"test_monitor/server/handlers"
+	"remote-control/server/handlers"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,8 +20,7 @@ type Server struct {
 	ctxHandler *handlers.ContextHandler
 }
 
-// NewServer tạo server mới với cấu hình và APIs
-func NewServer(config ServerConfig, eApi *api.EmulatorApi, uApi *api.UeApi, gApi *api.GnbApi) *Server {
+func NewServer(config ServerConfig, eApi handlers.EmulatorApi, uApi handlers.UeApi, gApi handlers.GnbApi) *Server {
 	if config.Port == "" {
 		config.Port = "4000"
 	}

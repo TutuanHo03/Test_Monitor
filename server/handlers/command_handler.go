@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"remote-control/models"
 	"strings"
-	"test_monitor/models"
 
 	"github.com/urfave/cli/v3"
 )

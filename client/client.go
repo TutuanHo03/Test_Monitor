@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"test_monitor/models"
+	"remote-control/models"
 
 	"github.com/abiosoft/ishell"
 )

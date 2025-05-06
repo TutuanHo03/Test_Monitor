@@ -1,4 +1,4 @@
-module test_monitor
+module remote-control
 
 go 1.24.0
 

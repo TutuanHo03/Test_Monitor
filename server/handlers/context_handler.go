@@ -3,8 +3,8 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"remote-control/models"
 	"strings"
-	"test_monitor/models"
 
 	"github.com/gin-gonic/gin"
 )
