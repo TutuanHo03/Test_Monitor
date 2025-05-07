@@ -3,7 +3,8 @@ package server
 import (
 	"fmt"
 	"log"
-	"remote-control/server/handlers"
+
+	"github.com/TutuanHo03/remote-control/server/handlers"
 
 	"github.com/gin-gonic/gin"
 )

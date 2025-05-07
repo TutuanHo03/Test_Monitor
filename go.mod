@@ -1,4 +1,4 @@
-module remote-control
+module github.com/TutuanHo03/remote-control
 
 go 1.24.0
 

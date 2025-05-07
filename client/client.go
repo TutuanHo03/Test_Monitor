@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"remote-control/models"
+	"github.com/TutuanHo03/remote-control/models"
 
 	"github.com/abiosoft/ishell"
 )
