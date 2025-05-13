@@ -19,6 +19,7 @@ type Client struct {
 	shell        *ishell.Shell
 	serverURL    string
 	contextStack []models.ClientContext
+	isAmfMode    bool // Track if we're in AMF mode
 }
 
 // NewClient creates and initializes a new CLI client
@@ -32,6 +33,7 @@ func NewClient() *Client {
 				Commands: []string{"help", "clear", "exit", "connect"},
 			},
 		},
+		isAmfMode: false,
 	}
 
 	client.setupCommands("root")
@@ -88,13 +90,19 @@ func (c *Client) setupCommands(contextType string) {
 		},
 	})
 
-	// Context-specific commands
+	// Check if we're in AMF mode
+	if c.isAmfMode {
+		c.setupAmfCommands()
+		return
+	}
+
+	// Context-specific commands for non-AMF mode
 	switch contextType {
 	case "root":
 		c.shell.AddCmd(&ishell.Cmd{
 			Name:     "connect",
-			Help:     "Connect to a MSSim [connect http://localhost:4000]",
-			LongHelp: "Connect to a server using URL. Example: connect http://localhost:4000",
+			Help:     "Connect to a MSsim [connect http://localhost:4000], Connect to AMF [connect http://localhost:6000]",
+			LongHelp: "Connect to a server using URL. Example: connect http://localhost:4000 or connect http://localhost:6000 for AMF",
 			Func: func(ctx *ishell.Context) {
 				if len(ctx.Args) < 1 {
 					ctx.Println("Usage: connect <server-url>")
@@ -183,6 +191,88 @@ func (c *Client) setupCommands(contextType string) {
 	}
 }
 
+// setupAmfCommands sets up the AMF-specific commands
+func (c *Client) setupAmfCommands() {
+	// Add AMF disconnect command
+	c.shell.AddCmd(&ishell.Cmd{
+		Name: "disconnect",
+		Help: "Disconnect AMF",
+		Func: func(ctx *ishell.Context) {
+			c.disconnectAmf()
+		},
+	})
+
+	// Add AMF-specific commands
+	amfCommands := c.requestAmfCommands()
+	for _, cmdInfo := range amfCommands {
+		info := cmdInfo
+		c.shell.AddCmd(&ishell.Cmd{
+			Name:     info.Name,
+			Help:     info.Usage,
+			LongHelp: c.generateLongHelp(info),
+			Func: func(ctx *ishell.Context) {
+				result, err := c.execAmfCmd(info.Name, ctx.Args)
+				if err != nil {
+					ctx.Printf("Error: %v\n", err)
+					return
+				}
+				ctx.Println(result)
+			},
+		})
+	}
+}
+
+// requestAmfCommands fetches AMF command definitions from the server
+func (c *Client) requestAmfCommands() []models.CommandInfo {
+	if c.serverURL == "" {
+		return nil
+	}
+
+	resp, err := http.Get(c.serverURL + "/api/status")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		// If status check fails, try a few default commands
+		return c.getDefaultAmfCommands()
+	}
+
+	// Get the actual commands
+	jsonData, err := json.Marshal(models.NavigationRequest{
+		Command: "help",
+	})
+	if err != nil {
+		return c.getDefaultAmfCommands()
+	}
+
+	resp, err = http.Post(c.serverURL+"/api/context/navigate", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return c.getDefaultAmfCommands()
+	}
+	defer resp.Body.Close()
+
+	var response models.NavigationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return c.getDefaultAmfCommands()
+	}
+
+	return response.Commands
+}
+
+// getDefaultAmfCommands returns default AMF commands if we can't get them from the server
+func (c *Client) getDefaultAmfCommands() []models.CommandInfo {
+	return []models.CommandInfo{
+		{Name: "list-ue", Usage: "List UE Context"},
+		{Name: "register-ue", Usage: "Register a UE to the core network", ArgsUsage: "<imsi>"},
+		{Name: "deregister-ue", Usage: "Deregister a UE from the core network", ArgsUsage: "<imsi>"},
+		{Name: "status", Usage: "Get AMF service status"},
+		{Name: "config", Usage: "Get AMF configuration"},
+		{Name: "send-n1n2-message", Usage: "Send N1/N2 message to a UE", ArgsUsage: "<ue-id> <message-type> <content>"},
+		{Name: "list-n1n2-subscriptions", Usage: "List N1/N2 message subscriptions", ArgsUsage: "<ue-id>"},
+		{Name: "initiate-handover", Usage: "Initiate handover for a UE", ArgsUsage: "<ue-id> <target-gnb>"},
+		{Name: "handover-history", Usage: "Show handover history for a UE", ArgsUsage: "<ue-id>"},
+		{Name: "nf-subscriptions", Usage: "List NF subscriptions"},
+		{Name: "sbi-endpoints", Usage: "List SBI endpoints"},
+	}
+}
+
 // connectToServer handles server connection
 func (c *Client) ConnectToServer(url string) {
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
@@ -191,27 +281,204 @@ func (c *Client) ConnectToServer(url string) {
 
 	c.serverURL = url
 
-	resp, err := http.Get(url + "/api/context")
+	// Check if this is an AMF connection (port 6000)
+	isAmfConnection := strings.Contains(url, ":6000")
+
+	if isAmfConnection {
+		c.connectToAmf(url)
+	} else {
+		// Regular MSsim connection
+		resp, err := http.Get(url + "/api/context")
+		if err != nil {
+			c.shell.Printf("Failed to connect to server: %v\n", err)
+			c.serverURL = "" // Reset if failing
+			return
+		}
+		defer resp.Body.Close()
+
+		c.navigateContext("connect", []string{url})
+	}
+}
+
+// connectToAmf handles AMF connection
+func (c *Client) connectToAmf(url string) {
+	// Check if AMF server is reachable
+	resp, err := http.Get(url + "/api/status")
 	if err != nil {
-		c.shell.Printf("Failed to connect to server: %v\n", err)
+		c.shell.Printf("Failed to connect to AMF: %v\n", err)
 		c.serverURL = "" // Reset if failing
 		return
 	}
 	defer resp.Body.Close()
 
-	c.navigateContext("connect", []string{url})
+	// Set AMF mode
+	c.isAmfMode = true
+
+	// Send connection request to AMF
+	jsonData, err := json.Marshal(models.NavigationRequest{
+		Command: "connect",
+	})
+	if err != nil {
+		c.shell.Printf("Error preparing request: %v\n", err)
+		return
+	}
+
+	resp, err = http.Post(url+"/api/context/navigate", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		c.shell.Printf("Error communicating with AMF server: %v\n", err)
+		c.isAmfMode = false
+		return
+	}
+	defer resp.Body.Close()
+
+	// Process response
+	var response models.NavigationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		c.shell.Printf("Error parsing response: %v\n", err)
+		c.isAmfMode = false
+		return
+	}
+
+	// Update context
+	amfContext := models.ClientContext{
+		Type:      "amf",
+		Name:      "amf",
+		NodeType:  "amf",
+		Commands:  getCommandNames(response.Commands),
+		ServerURL: url,
+	}
+	c.contextStack = []models.ClientContext{
+		c.contextStack[0], // Keep root
+		amfContext,        // Add AMF
+	}
+
+	// Update prompt
+	c.shell.SetPrompt(">>> ")
+
+	// Display connection message
+	if response.Message != "" {
+		c.shell.Println(response.Message)
+	} else {
+		c.shell.Println("Connected to AMF: " + url + ", type help to see commands")
+	}
+
+	// Setup AMF commands
+	c.setupAmfCommands()
+}
+
+// disconnectAmf handles disconnection from AMF
+func (c *Client) disconnectAmf() {
+	if !c.isAmfMode || c.serverURL == "" {
+		return
+	}
+
+	// Send disconnect request
+	jsonData, err := json.Marshal(models.NavigationRequest{
+		Command: "disconnect",
+	})
+	if err != nil {
+		c.shell.Printf("Error preparing request: %v\n", err)
+		return
+	}
+
+	resp, err := http.Post(c.serverURL+"/api/context/navigate", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		c.shell.Printf("Error communicating with AMF server: %v\n", err)
+		// Continue with local disconnect even if server request fails
+	} else {
+		defer resp.Body.Close()
+
+		// Process response
+		var response models.NavigationResponse
+		if err := json.NewDecoder(resp.Body).Decode(&response); err == nil && response.Message != "" {
+			c.shell.Println(response.Message)
+		} else {
+			c.shell.Println("Disconnect AMF successfully.")
+		}
+	}
+
+	// Reset to root context
+	c.contextStack = c.contextStack[:1] // Keep only root
+	c.serverURL = ""
+	c.isAmfMode = false
+
+	// Reset commands
+	c.setupCommands("root")
+}
+
+// execAmfCmd executes an AMF-specific command
+func (c *Client) execAmfCmd(cmdName string, args []string) (string, error) {
+	if !c.isAmfMode || c.serverURL == "" {
+		return "", fmt.Errorf("not connected to AMF")
+	}
+
+	// Create command request
+	cmdReq := models.CommandRequest{
+		NodeType:    "amf",
+		NodeName:    "amf",
+		CommandText: cmdName,
+		CommandPath: cmdName,
+		Args:        args,
+	}
+
+	// Send the command
+	jsonData, err := json.Marshal(cmdReq)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal command request: %v", err)
+	}
+
+	resp, err := http.Post(c.serverURL+"/api/exec", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to send command: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %v", err)
+	}
+
+	var response models.CommandResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return "", fmt.Errorf("failed to parse response: %v\nresponse body: %s", err, string(body))
+	}
+
+	if response.Error != "" {
+		return "", fmt.Errorf("server error: %s", response.Error)
+	}
+
+	return response.Response, nil
 }
 
 // displayHelp generates help text for the current context
 func (c *Client) displayHelp() func(*ishell.Context) {
 	return func(ctx *ishell.Context) {
+		if c.isAmfMode {
+			// AMF-specific help
+			ctx.Println("\nCommands:")
+			ctx.Println("  clear                Clear the screen")
+			ctx.Println("  disconnect           Disconnect AMF")
+			ctx.Println("  exit                 Exit the client")
+			ctx.Println("  help                 Display help")
+
+			// Get AMF commands
+			amfCommands := c.requestAmfCommands()
+			for _, cmd := range amfCommands {
+				if cmd.Name != "clear" && cmd.Name != "disconnect" && cmd.Name != "exit" && cmd.Name != "help" {
+					ctx.Printf("  %-20s %s\n", cmd.Name, cmd.Usage)
+				}
+			}
+			return
+		}
+
+		// Standard help for other contexts
 		currentContext := c.getCurrentContext()
 
 		switch currentContext.Type {
 		case "root":
 			ctx.Println("Commands:")
 			ctx.Println("  clear        clear the screen")
-			ctx.Println("  connect      Connect to a MSSim [connect http://localhost:4000]")
+			ctx.Println("  connect      Connect to a MSsim [connect http://localhost:4000], Connect to AMF [connect http://localhost:6000]")
 			ctx.Println("  exit         exit the program")
 			ctx.Println("  help         display help")
 
@@ -262,7 +529,7 @@ func (c *Client) displayHelp() func(*ishell.Context) {
 	}
 }
 
-// navigateContext handles navigation between contexts
+// navigateContext handles navigation between contexts (for non-AMF mode)
 func (c *Client) navigateContext(command string, args []string) {
 	currentContext := c.getCurrentContext()
 
@@ -531,4 +798,13 @@ func (c *Client) getCurrentContext() models.ClientContext {
 		return c.contextStack[len(c.contextStack)-1]
 	}
 	return models.ClientContext{Type: "root", Name: "root"}
+}
+
+// Helper function to get command names from CommandInfo slice
+func getCommandNames(cmds []models.CommandInfo) []string {
+	names := make([]string, len(cmds))
+	for i, cmd := range cmds {
+		names[i] = cmd.Name
+	}
+	return names
 }

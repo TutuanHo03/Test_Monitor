@@ -23,6 +23,7 @@ type CommandRequest struct {
 	NodeType    string            `json:"nodeType"`
 	NodeName    string            `json:"nodeName"`
 	CommandPath string            `json:"commandPath"`
+	CommandText string            `json:"commandText"`
 	RawCommand  string            `json:"rawCommand"`
 	Args        []string          `json:"args,omitempty"`
 	Flags       map[string]string `json:"flags,omitempty"`

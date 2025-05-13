@@ -44,7 +44,7 @@ type CommandStore struct {
 	commandCache map[string][]models.CommandInfo
 }
 
-// NewCommandStore creates a new command store
+// NewCommandStore creates a new command store with AMF
 func NewCommandStore(eApi EmulatorApi, uApi UeApi, gApi GnbApi) *CommandStore {
 	store := &CommandStore{
 		eApi:         eApi,
@@ -399,7 +399,7 @@ func (s *CommandStore) GetObjectsOfType(objectType string) ([]string, error) {
 	case "emulator":
 		return []string{"emulator"}, nil
 	default:
-		return nil, errors.New("invalid object type")
+		return nil, errors.New("unknown object type")
 	}
 }
 
@@ -523,6 +523,7 @@ func (s *CommandStore) GenerateCommandHelp(nodeType, commandName string) string 
 	return sb.String()
 }
 
+// GetNodeName retrieves the node name from the context
 func GetNodeName(ctx context.Context) (string, bool) {
 	val := ctx.Value("nodename")
 	if nodename, ok := val.(string); ok {
