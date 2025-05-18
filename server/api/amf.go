@@ -8,17 +8,19 @@ func CreateAmfApi() *AmfApi {
 	return &AmfApi{}
 }
 
-func (aApi *AmfApi) ListUeContexts() []string {
+func (aApi *AmfApi) ListUeContexts() []string { // quan trọng
 	// Would interface with the actual AMF service
 	return []string{"imsi-123456789012345", "imsi-234567890123456"}
 }
 
-func (aApi *AmfApi) RegisterUe(imsi string) bool {
+// view UE context
+// AMF có thể trigger 1 event về PDU session
+func (aApi *AmfApi) RegisterUe(imsi string) bool { //bỏ qua
 	// Interface with AMF registration service
 	return true
 }
 
-func (aApi *AmfApi) DeregisterUe(imsi string, cause uint8) bool {
+func (aApi *AmfApi) DeregisterUe(imsi string, cause uint8) bool { // quan trọng trigger AMF deregistration
 	// Interface with AMF to deregister UE
 	return true
 }
