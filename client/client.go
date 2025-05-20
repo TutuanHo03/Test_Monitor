@@ -260,16 +260,7 @@ func (c *Client) requestAmfCommands() []models.CommandInfo {
 func (c *Client) getDefaultAmfCommands() []models.CommandInfo {
 	return []models.CommandInfo{
 		{Name: "list-ue", Usage: "List UE Context"},
-		{Name: "register-ue", Usage: "Register a UE to the core network", ArgsUsage: "<imsi>"},
 		{Name: "deregister-ue", Usage: "Deregister a UE from the core network", ArgsUsage: "<imsi>"},
-		{Name: "status", Usage: "Get AMF service status"},
-		{Name: "config", Usage: "Get AMF configuration"},
-		{Name: "send-n1n2-message", Usage: "Send N1/N2 message to a UE", ArgsUsage: "<ue-id> <message-type> <content>"},
-		{Name: "list-n1n2-subscriptions", Usage: "List N1/N2 message subscriptions", ArgsUsage: "<ue-id>"},
-		{Name: "initiate-handover", Usage: "Initiate handover for a UE", ArgsUsage: "<ue-id> <target-gnb>"},
-		{Name: "handover-history", Usage: "Show handover history for a UE", ArgsUsage: "<ue-id>"},
-		{Name: "nf-subscriptions", Usage: "List NF subscriptions"},
-		{Name: "sbi-endpoints", Usage: "List SBI endpoints"},
 	}
 }
 
@@ -372,42 +363,46 @@ func (c *Client) disconnectAmf() {
 		return
 	}
 
-	// Send disconnect request
+	// Send disconnect request - but don't rely on the response
 	jsonData, err := json.Marshal(models.NavigationRequest{
 		Command: "disconnect",
 	})
-	if err != nil {
-		c.shell.Printf("Error preparing request: %v\n", err)
-		return
-	}
 
-	resp, err := http.Post(c.serverURL+"/api/context/navigate", "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		c.shell.Printf("Error communicating with AMF server: %v\n", err)
-		// Continue with local disconnect even if server request fails
-	} else {
-		defer resp.Body.Close()
-
-		// Process response
-		var response models.NavigationResponse
-		if err := json.NewDecoder(resp.Body).Decode(&response); err == nil && response.Message != "" {
-			c.shell.Println(response.Message)
+	// Try to send the request to the server
+	if err == nil {
+		resp, err := http.Post(c.serverURL+"/api/context/navigate", "application/json", bytes.NewBuffer(jsonData))
+		if err == nil {
+			defer resp.Body.Close()
+			var response models.NavigationResponse
+			if err := json.NewDecoder(resp.Body).Decode(&response); err == nil && response.Message != "" {
+				c.shell.Println(response.Message)
+			} else {
+				c.shell.Println("Disconnected from AMF successfully.")
+			}
 		} else {
-			c.shell.Println("Disconnect AMF successfully.")
+			c.shell.Println("Disconnected from AMF successfully.")
 		}
+	} else {
+		c.shell.Println("Disconnected from AMF successfully.")
 	}
 
-	// Reset to root context
+	// Reset client state locally - this is crucial
 	c.contextStack = c.contextStack[:1] // Keep only root
 	c.serverURL = ""
 	c.isAmfMode = false
 
-	// Reset commands
+	// Reset commands - important for UI update
 	c.setupCommands("root")
+	c.shell.SetPrompt(">>> ")
 }
 
 // execAmfCmd executes an AMF-specific command
 func (c *Client) execAmfCmd(cmdName string, args []string) (string, error) {
+	if cmdName == "disconnect" {
+		c.disconnectAmf()
+		return "Disconnected from AMF", nil
+	}
+
 	if !c.isAmfMode || c.serverURL == "" {
 		return "", fmt.Errorf("not connected to AMF")
 	}
@@ -688,21 +683,8 @@ func (c *Client) requestCommands(nodeType, nodeName string) []models.CommandInfo
 
 // execCmd executes a command on the server
 func (c *Client) execCmd(nodeType, nodeName, cmdName string, args []string) (string, error) {
-	// Separate args and flags
-	cmdArgs := []string{}
-	cmdFlags := []string{}
-
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "--") || strings.HasPrefix(arg, "-") {
-			cmdFlags = append(cmdFlags, arg)
-		} else {
-			cmdArgs = append(cmdArgs, arg)
-		}
-	}
-
-	// Check for help flag
-	for _, flag := range cmdFlags {
-		if flag == "--help" || flag == "-h" {
+		if arg == "--help" || arg == "-h" {
 			cmdReq := models.CommandRequest{
 				NodeType:    nodeType,
 				NodeName:    nodeName,
@@ -714,13 +696,19 @@ func (c *Client) execCmd(nodeType, nodeName, cmdName string, args []string) (str
 		}
 	}
 
-	// Execute normal command with all args and flags
-	allArgs := append(cmdArgs, cmdFlags...)
+	// Create raw command string for better server-side parsing
+	rawCmd := cmdName
+	for _, arg := range args {
+		rawCmd += " " + arg
+	}
+
+	// Create command request
 	cmdReq := models.CommandRequest{
 		NodeType:    nodeType,
 		NodeName:    nodeName,
 		CommandPath: cmdName,
-		Args:        allArgs,
+		Args:        args,
+		RawCommand:  rawCmd, // Include raw command string
 	}
 
 	return c.sendCmd(cmdReq)

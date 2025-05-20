@@ -13,22 +13,8 @@ import (
 type AmfApi interface {
 	// Basic AMF functions
 	ListUeContexts() []string
-	RegisterUe(imsi string) bool
+
 	DeregisterUe(imsi string, cause uint8) bool
-	GetServiceStatus() map[string]string
-	GetConfiguration() map[string]interface{}
-
-	// N1/N2 Interface Management
-	SendN1N2Message(ueId string, messageType string, content string) bool
-	ListN1N2Subscriptions(ueId string) []string
-
-	// Handover Management
-	InitiateHandover(ueId string, targetGnb string) bool
-	ListHandoverHistory(ueId string) []map[string]string
-
-	// SBI Interface
-	GetNfSubscriptions() []string
-	GetSbiEndpoints() map[string]string
 }
 
 // AmfHandler manages AMF command definitions and executions
@@ -74,28 +60,6 @@ func (h *NFHandler) initCommands() {
 				},
 			},
 			{
-				Name:        "register-ue",
-				Usage:       "Register a UE with IMSI",
-				ArgsUsage:   "<imsi>",
-				Description: "Register a UE to the network with the specified IMSI",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					rspCh := ctx.Value("rsp").(chan string)
-					args := cmd.Args().Slice()
-					if len(args) < 1 {
-						rspCh <- "Error: IMSI is required"
-						return nil
-					}
-					imsi := args[0]
-					success := h.aApi.RegisterUe(imsi)
-					if success {
-						rspCh <- fmt.Sprintf("UE %s registered successfully", imsi)
-					} else {
-						rspCh <- fmt.Sprintf("Failed to register UE %s", imsi)
-					}
-					return nil
-				},
-			},
-			{
 				Name:        "deregister-ue",
 				Usage:       "Deregister a UE with IMSI",
 				ArgsUsage:   "<imsi>",
@@ -109,197 +73,44 @@ func (h *NFHandler) initCommands() {
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					rspCh := ctx.Value("rsp").(chan string)
+					imsi := ""
+					cause := uint8(cmd.Int("cause"))
+
+					// Get arguments
 					args := cmd.Args().Slice()
-					if len(args) < 1 {
+					if len(args) > 0 {
+						imsi = args[0]
+					}
+
+					// Check for custom args
+					if customArgs, ok := ctx.Value("custom_args").(map[string]string); ok {
+						// Check for positional arg for IMSI
+						if val, exists := customArgs["arg1"]; exists {
+							imsi = val
+						}
+
+						// Check for cause flag
+						if val, exists := customArgs["cause"]; exists {
+							var causeVal uint8
+							n, err := fmt.Sscanf(val, "%d", &causeVal)
+							if err == nil && n == 1 {
+								cause = causeVal
+							}
+						}
+					}
+
+					if imsi == "" {
 						rspCh <- "Error: IMSI is required"
 						return nil
 					}
-					imsi := args[0]
-					cause := uint8(cmd.Int("cause"))
+
+					fmt.Printf("Deregistering UE with IMSI: %s and cause: %d\n", imsi, cause)
 					success := h.aApi.DeregisterUe(imsi, cause)
 					if success {
 						rspCh <- fmt.Sprintf("UE %s deregistered successfully", imsi)
 					} else {
 						rspCh <- fmt.Sprintf("Failed to deregister UE %s", imsi)
 					}
-					return nil
-				},
-			},
-			{
-				Name:  "status",
-				Usage: "Get AMF service status",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					rspCh := ctx.Value("rsp").(chan string)
-					status := h.aApi.GetServiceStatus()
-					var sb strings.Builder
-					sb.WriteString("AMF Service Status:\n")
-					for k, v := range status {
-						sb.WriteString(fmt.Sprintf("  %s: %s\n", k, v))
-					}
-					rspCh <- sb.String()
-					return nil
-				},
-			},
-			{
-				Name:  "config",
-				Usage: "Get AMF configuration",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					rspCh := ctx.Value("rsp").(chan string)
-					config := h.aApi.GetConfiguration()
-
-					// Format config output
-					var sb strings.Builder
-					sb.WriteString("AMF Configuration:\n")
-
-					// Handle plmnId specifically as it's nested
-					if plmnId, ok := config["plmnId"].(map[string]string); ok {
-						sb.WriteString(fmt.Sprintf("  plmnId: MCC %s, MNC %s\n",
-							plmnId["mcc"], plmnId["mnc"]))
-						delete(config, "plmnId")
-					}
-
-					// Add rest of the config items
-					for k, v := range config {
-						sb.WriteString(fmt.Sprintf("  %s: %v\n", k, v))
-					}
-
-					rspCh <- sb.String()
-					return nil
-				},
-			},
-			// N1/N2 Interface Management
-			{
-				Name:        "send-n1n2-message",
-				Usage:       "Send N1/N2 message to a UE",
-				ArgsUsage:   "<ue-id> <message-type> <content>",
-				Description: "Send an N1/N2 message to a specific UE",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					rspCh := ctx.Value("rsp").(chan string)
-					args := cmd.Args().Slice()
-					if len(args) < 3 {
-						rspCh <- "Error: UE ID, message type and content are required"
-						return nil
-					}
-					ueId := args[0]
-					msgType := args[1]
-					content := args[2]
-
-					success := h.aApi.SendN1N2Message(ueId, msgType, content)
-					if success {
-						rspCh <- fmt.Sprintf("Message sent successfully to UE %s", ueId)
-					} else {
-						rspCh <- fmt.Sprintf("Failed to send message to UE %s", ueId)
-					}
-					return nil
-				},
-			},
-			{
-				Name:        "list-n1n2-subscriptions",
-				Usage:       "List N1/N2 message subscriptions for a UE",
-				ArgsUsage:   "<ue-id>",
-				Description: "List all N1/N2 message subscriptions for a specific UE",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					rspCh := ctx.Value("rsp").(chan string)
-					args := cmd.Args().Slice()
-					if len(args) < 1 {
-						rspCh <- "Error: UE ID is required"
-						return nil
-					}
-					ueId := args[0]
-
-					subs := h.aApi.ListN1N2Subscriptions(ueId)
-					if len(subs) == 0 {
-						rspCh <- fmt.Sprintf("No N1/N2 subscriptions found for UE %s", ueId)
-					} else {
-						rspCh <- fmt.Sprintf("N1/N2 subscriptions for UE %s:\n%s", ueId, strings.Join(subs, "\n"))
-					}
-					return nil
-				},
-			},
-
-			// Handover Management
-			{
-				Name:        "initiate-handover",
-				Usage:       "Initiate handover for a UE",
-				ArgsUsage:   "<ue-id> <target-gnb>",
-				Description: "Initiate handover procedure for a UE to a target gNB",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					rspCh := ctx.Value("rsp").(chan string)
-					args := cmd.Args().Slice()
-					if len(args) < 2 {
-						rspCh <- "Error: UE ID and target gNB are required"
-						return nil
-					}
-					ueId := args[0]
-					targetGnb := args[1]
-
-					success := h.aApi.InitiateHandover(ueId, targetGnb)
-					if success {
-						rspCh <- fmt.Sprintf("Handover initiated for UE %s to gNB %s", ueId, targetGnb)
-					} else {
-						rspCh <- fmt.Sprintf("Failed to initiate handover for UE %s", ueId)
-					}
-					return nil
-				},
-			},
-			{
-				Name:        "handover-history",
-				Usage:       "Show handover history for a UE",
-				ArgsUsage:   "<ue-id>",
-				Description: "Display handover history for a specific UE",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					rspCh := ctx.Value("rsp").(chan string)
-					args := cmd.Args().Slice()
-					if len(args) < 1 {
-						rspCh <- "Error: UE ID is required"
-						return nil
-					}
-					ueId := args[0]
-
-					history := h.aApi.ListHandoverHistory(ueId)
-					if len(history) == 0 {
-						rspCh <- fmt.Sprintf("No handover history found for UE %s", ueId)
-					} else {
-						var sb strings.Builder
-						sb.WriteString(fmt.Sprintf("Handover history for UE %s:\n", ueId))
-						for i, entry := range history {
-							sb.WriteString(fmt.Sprintf("%d. Time: %s, Source: %s, Target: %s, Status: %s\n",
-								i+1, entry["time"], entry["source"], entry["target"], entry["status"]))
-						}
-						rspCh <- sb.String()
-					}
-					return nil
-				},
-			},
-
-			// SBI Interface
-			{
-				Name:  "nf-subscriptions",
-				Usage: "List NF subscriptions",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					rspCh := ctx.Value("rsp").(chan string)
-					subs := h.aApi.GetNfSubscriptions()
-					if len(subs) == 0 {
-						rspCh <- "No NF subscriptions found"
-					} else {
-						rspCh <- fmt.Sprintf("NF subscriptions:\n%s", strings.Join(subs, "\n"))
-					}
-					return nil
-				},
-			},
-			{
-				Name:  "sbi-endpoints",
-				Usage: "List SBI endpoints",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					rspCh := ctx.Value("rsp").(chan string)
-					endpoints := h.aApi.GetSbiEndpoints()
-
-					var sb strings.Builder
-					sb.WriteString("SBI Endpoints:\n")
-					for name, url := range endpoints {
-						sb.WriteString(fmt.Sprintf("  %s: %s\n", name, url))
-					}
-					rspCh <- sb.String()
 					return nil
 				},
 			},
@@ -377,22 +188,39 @@ func (h *NFHandler) ExecuteCommand(req models.CommandRequest) (models.CommandRes
 	ctx := context.WithValue(context.Background(), "rsp", rspCh)
 	ctx = context.WithValue(ctx, "nodename", req.NodeName)
 
-	// Process command args
-	var cmdArgs []string
-	if req.RawCommand != "" {
-		cmdArgs = strings.Fields(req.RawCommand)
-	} else {
-		cmdArgs = []string{req.CommandPath}
-		cmdArgs = append(cmdArgs, req.Args...)
-	}
-
-	// Execute appropriate command
 	var err error
-	switch req.NodeType {
-	case "amf":
-		err = h.amfCmd.Run(ctx, append([]string{"amf"}, cmdArgs...))
-	default:
-		return models.CommandResponse{}, errors.New("invalid node type")
+
+	// Process command
+	if req.RawCommand != "" {
+		// Process raw command string with custom parser
+		cmdName, customArgs := parseCommandArgs(req.RawCommand)
+
+		if len(customArgs) > 0 {
+			ctx = context.WithValue(ctx, "custom_args", customArgs)
+		}
+
+		fmt.Printf("DEBUG: Parsed AMF raw command '%s' into command '%s' with args: %v\n",
+			req.RawCommand, cmdName, customArgs)
+
+		switch req.NodeType {
+		case "amf":
+			// Set up standard CLI args
+			cliArgs := []string{"amf", cmdName}
+			err = h.amfCmd.Run(ctx, cliArgs)
+		default:
+			return models.CommandResponse{}, errors.New("invalid node type")
+		}
+	} else {
+		// Standard command processing
+		cmdArgs := []string{req.CommandPath}
+		cmdArgs = append(cmdArgs, req.Args...)
+
+		switch req.NodeType {
+		case "amf":
+			err = h.amfCmd.Run(ctx, append([]string{"amf"}, cmdArgs...))
+		default:
+			return models.CommandResponse{}, errors.New("invalid node type")
+		}
 	}
 
 	if err != nil {

@@ -70,6 +70,12 @@ func (h *AmfContextHandler) ConnectToAmf(c *gin.Context) {
 		return
 	}
 
+	// Handle disconnect command if present
+	if req.Command == "disconnect" {
+		h.DisconnectFromAmf(c)
+		return
+	}
+
 	// Construct client context for AMF connection
 	clientContext := models.ClientContext{
 		Type:     "amf",
@@ -89,13 +95,7 @@ func (h *AmfContextHandler) ConnectToAmf(c *gin.Context) {
 
 // DisconnectFromAmf handles disconnection from AMF
 func (h *AmfContextHandler) DisconnectFromAmf(c *gin.Context) {
-	var req models.NavigationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.NavigationResponse{
-			Error: "Invalid request format: " + err.Error(),
-		})
-		return
-	}
+	// No need to parse the request again - we know it's a disconnect command
 
 	// Return to root context
 	rootContext := models.ClientContext{
@@ -132,7 +132,7 @@ func (h *AmfContextHandler) DisconnectFromAmf(c *gin.Context) {
 	c.JSON(http.StatusOK, models.NavigationResponse{
 		Context:  rootContext,
 		Prompt:   ">>> ",
-		Message:  "Disconnect AMF successfully.",
+		Message:  "Disconnected from AMF successfully.",
 		Commands: rootCommands,
 	})
 }
@@ -146,6 +146,7 @@ func (h *AmfContextHandler) ExecuteCommand(c *gin.Context) {
 		})
 		return
 	}
+
 	// Check if the command is a navigation command
 	switch req.CommandText {
 	case "help":
@@ -156,13 +157,10 @@ func (h *AmfContextHandler) ExecuteCommand(c *gin.Context) {
 		})
 		return
 	case "disconnect":
-		// Handle disconnect via NavigationRequest
-		navReq := models.NavigationRequest{
-			Command: "disconnect",
-		}
-		c.Request.Body = nil // Reset the body
-		c.Set("navRequest", navReq)
-		h.DisconnectFromAmf(c)
+		// For disconnect, we just return success and let the client handle the state change
+		c.JSON(http.StatusOK, models.CommandResponse{
+			Response: "Disconnected from AMF successfully.",
+		})
 		return
 	case "clear", "exit":
 		// These are handled by the client

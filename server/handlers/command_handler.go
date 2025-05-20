@@ -58,6 +58,60 @@ func NewCommandStore(eApi EmulatorApi, uApi UeApi, gApi GnbApi) *CommandStore {
 	return store
 }
 
+func parseCommandArgs(rawCommand string) (string, map[string]string) {
+	parts := strings.Fields(rawCommand)
+	if len(parts) == 0 {
+		return "", nil
+	}
+
+	command := parts[0]
+	args := make(map[string]string)
+	i := 1
+	for i < len(parts) {
+		curr := parts[i]
+
+		// Handle flag with dash prefix (-flag value)
+		if strings.HasPrefix(curr, "-") {
+			flagName := strings.TrimPrefix(curr, "-")
+
+			// Check if there's a value after this flag
+			if i+1 < len(parts) && !strings.HasPrefix(parts[i+1], "-") {
+				// Don't treat special keywords as values
+				if parts[i+1] != "type" && parts[i+1] != "id" {
+					args[flagName] = parts[i+1]
+					i += 2 // Skip both flag and value
+				} else {
+					args[flagName] = "true"
+					i++
+				}
+			} else {
+				// Flag without value
+				args[flagName] = "true"
+				i++
+			}
+		} else if curr == "type" && i+1 < len(parts) {
+			// Special case for "type X" format
+			typeValue := parts[i+1]
+			args["type"] = typeValue
+			i += 2 // Skip both "type" and its value
+		} else if curr == "id" && i+1 < len(parts) {
+			// Special case for "id X" format
+			idValue := parts[i+1]
+			args["id"] = idValue
+			i += 2 // Skip both "id" and its value
+		} else {
+			// Check if it's the first positional argument
+			if i == 1 {
+				args["arg1"] = curr
+			} else {
+				args[fmt.Sprintf("arg%d", i)] = curr
+			}
+			i++
+		}
+	}
+	return command, args
+}
+
 // initCommands initializes all command definitions
 func (s *CommandStore) initCommands() {
 	// Initialize emulator commands
@@ -99,14 +153,32 @@ func (s *CommandStore) initCommands() {
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					rspCh := ctx.Value("rsp").(chan string)
+					supi := ""
+					register := cmd.Bool("register")
+
+					// Get arguments
 					args := cmd.Args().Slice()
-					if len(args) < 1 {
+					if len(args) > 0 {
+						supi = args[0]
+					}
+					if customArgs, ok := ctx.Value("custom_args").(map[string]string); ok {
+						// Check for positional arg
+						if val, exists := customArgs["arg1"]; exists {
+							supi = val
+						}
+						if _, exists := customArgs["register"]; exists {
+							register = true
+						}
+					}
+
+					if supi == "" {
 						rspCh <- "Error: SUPI is required"
 						return nil
 					}
-					supi := args[0]
-					register := cmd.Bool("register")
+
+					fmt.Printf("Adding UE with SUPI: %s, register: %v\n", supi, register)
 					success := s.eApi.AddUe(supi, register)
+
 					if success {
 						rspCh <- fmt.Sprintf("UE %s added successfully to emulator", supi)
 					} else {
@@ -138,7 +210,16 @@ func (s *CommandStore) initCommands() {
 					rspCh := ctx.Value("rsp").(chan string)
 					nodeName, hasNode := GetNodeName(ctx)
 					isEmergency := cmd.Bool("emergency")
+
+					if customArgs, ok := ctx.Value("custom_args").(map[string]string); ok {
+						if _, exists := customArgs["emergency"]; exists {
+							isEmergency = true
+						}
+					}
+
+					fmt.Printf("Registering UE with emergency: %v\n", isEmergency)
 					success := s.uApi.Register(isEmergency)
+
 					if success {
 						if hasNode {
 							rspCh <- fmt.Sprintf("UE %s registered successfully", nodeName)
@@ -170,7 +251,20 @@ func (s *CommandStore) initCommands() {
 					rspCh := ctx.Value("rsp").(chan string)
 					nodeName, hasNode := GetNodeName(ctx)
 					deregType := uint8(cmd.Int("type"))
+
+					if customArgs, ok := ctx.Value("custom_args").(map[string]string); ok {
+						if val, exists := customArgs["type"]; exists {
+							var typeVal uint8
+							n, err := fmt.Sscanf(val, "%d", &typeVal)
+							if err == nil && n == 1 {
+								deregType = typeVal
+							}
+						}
+					}
+
+					fmt.Printf("Deregistering UE with type: %d\n", deregType)
 					success := s.uApi.Deregister(deregType)
+
 					if success {
 						if hasNode {
 							rspCh <- fmt.Sprintf("UE %s deregistered successfully", nodeName)
@@ -211,9 +305,28 @@ func (s *CommandStore) initCommands() {
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					rspCh := ctx.Value("rsp").(chan string)
 					nodeName, hasNode := GetNodeName(ctx)
+
 					slice := cmd.String("slice")
 					dn := cmd.String("dn")
 					sessionType := uint8(cmd.Int("type"))
+
+					// Check if custom args exist in context
+					if customArgs, ok := ctx.Value("custom_args").(map[string]string); ok {
+						if val, exists := customArgs["slice"]; exists {
+							slice = val
+						}
+						if val, exists := customArgs["dn"]; exists {
+							dn = val
+						}
+						if val, exists := customArgs["type"]; exists {
+							var typeVal uint8 = 0
+							n, err := fmt.Sscanf(val, "%d", &typeVal)
+							if err == nil && n == 1 {
+								sessionType = typeVal
+							}
+						}
+					}
+
 					success := s.uApi.CreateSession(slice, dn, sessionType)
 					if success {
 						if hasNode {
@@ -248,13 +361,28 @@ func (s *CommandStore) initCommands() {
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					rspCh := ctx.Value("rsp").(chan string)
 					nodeName, hasNode := GetNodeName(ctx)
+					ueId := ""
+
+					// Get arguments
 					args := cmd.Args().Slice()
-					if len(args) < 1 {
+					if len(args) > 0 {
+						ueId = args[0]
+					}
+
+					if customArgs, ok := ctx.Value("custom_args").(map[string]string); ok {
+						if val, exists := customArgs["arg1"]; exists {
+							ueId = val
+						}
+					}
+
+					if ueId == "" {
 						rspCh <- "Error: UE ID is required"
 						return nil
 					}
-					ueId := args[0]
+
+					fmt.Printf("Releasing UE with ID: %s\n", ueId)
 					success := s.gApi.ReleaseUe(ueId)
+
 					if success {
 						if hasNode {
 							rspCh <- fmt.Sprintf("UE %s released successfully from gNB %s", ueId, nodeName)
@@ -286,14 +414,37 @@ func (s *CommandStore) initCommands() {
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					rspCh := ctx.Value("rsp").(chan string)
 					nodeName, hasNode := GetNodeName(ctx)
+					ueId := ""
+					sessionId := uint8(cmd.Int("id"))
+
+					// Get arguments
 					args := cmd.Args().Slice()
-					if len(args) < 1 {
+					if len(args) > 0 {
+						ueId = args[0]
+					}
+
+					// Check for custom args
+					if customArgs, ok := ctx.Value("custom_args").(map[string]string); ok {
+						if val, exists := customArgs["arg1"]; exists {
+							ueId = val
+						}
+						if val, exists := customArgs["id"]; exists {
+							var idVal uint8
+							n, err := fmt.Sscanf(val, "%d", &idVal)
+							if err == nil && n == 1 {
+								sessionId = idVal
+							}
+						}
+					}
+
+					if ueId == "" {
 						rspCh <- "Error: UE ID is required"
 						return nil
 					}
-					ueId := args[0]
-					sessionId := uint8(cmd.Int("id"))
+
+					fmt.Printf("Releasing session %d for UE: %s\n", sessionId, ueId)
 					success := s.gApi.ReleaseSession(ueId, sessionId)
+
 					if success {
 						if hasNode {
 							rspCh <- fmt.Sprintf("Session %d for UE %s released successfully from gNB %s",
@@ -427,26 +578,49 @@ func (s *CommandStore) ExecuteCommand(req models.CommandRequest) (models.Command
 	ctx := context.WithValue(context.Background(), "rsp", rspCh)
 	ctx = context.WithValue(ctx, "nodename", req.NodeName)
 
-	// Process command args
-	var cmdArgs []string
-	if req.RawCommand != "" {
-		cmdArgs = strings.Fields(req.RawCommand)
-	} else {
-		cmdArgs = []string{req.CommandPath}
-		cmdArgs = append(cmdArgs, req.Args...)
-	}
-
-	// Execute appropriate command
 	var err error
-	switch req.NodeType {
-	case "emulator":
-		err = s.emuCmd.Run(ctx, append([]string{"emulator"}, cmdArgs...))
-	case "ue":
-		err = s.ueCmd.Run(ctx, append([]string{"ue"}, cmdArgs...))
-	case "gnb":
-		err = s.gnbCmd.Run(ctx, append([]string{"gnb"}, cmdArgs...))
-	default:
-		return models.CommandResponse{}, errors.New("invalid node type")
+
+	// Process command
+	if req.RawCommand != "" {
+		// Process raw command string with custom parser
+		cmdName, customArgs := parseCommandArgs(req.RawCommand)
+
+		if len(customArgs) > 0 {
+			ctx = context.WithValue(ctx, "custom_args", customArgs)
+		}
+
+		fmt.Printf("DEBUG: Parsed raw command '%s' into command '%s' with args: %v\n",
+			req.RawCommand, cmdName, customArgs)
+
+		switch req.NodeType {
+		case "emulator":
+			// Set up standard CLI args
+			cliArgs := []string{"emulator", cmdName}
+			err = s.emuCmd.Run(ctx, cliArgs)
+		case "ue":
+			cliArgs := []string{"ue", cmdName}
+			err = s.ueCmd.Run(ctx, cliArgs)
+		case "gnb":
+			cliArgs := []string{"gnb", cmdName}
+			err = s.gnbCmd.Run(ctx, cliArgs)
+		default:
+			return models.CommandResponse{}, errors.New("invalid node type")
+		}
+	} else {
+		// Standard command processing
+		cmdArgs := []string{req.CommandPath}
+		cmdArgs = append(cmdArgs, req.Args...)
+
+		switch req.NodeType {
+		case "emulator":
+			err = s.emuCmd.Run(ctx, append([]string{"emulator"}, cmdArgs...))
+		case "ue":
+			err = s.ueCmd.Run(ctx, append([]string{"ue"}, cmdArgs...))
+		case "gnb":
+			err = s.gnbCmd.Run(ctx, append([]string{"gnb"}, cmdArgs...))
+		default:
+			return models.CommandResponse{}, errors.New("invalid node type")
+		}
 	}
 
 	if err != nil {
